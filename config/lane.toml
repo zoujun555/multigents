@@ -1,0 +1,168 @@
+# 多 Agent 工作台配置。改完立即生效（每轮调度都会重新读取）。
+
+[workbench]
+max_parallel = 2          # 同时运行的阶段总数（跨所有需求）
+poll_seconds = 15         # 调度器轮询间隔
+limit_pause_minutes = 30  # 工具报告用量额度用完时，暂停它多久再重试（需求留在原阶段排队，不算卡住）
+worktree_root = "worktrees"   # 相对工作台目录，或写绝对路径
+branch_prefix = "lane/"
+
+# 每天每个工具最多启动多少次无头会话。到上限后需求排队等待，不算卡住。
+[budget]
+claude = 40
+agy = 60
+
+[review]
+max_rounds = 2            # 评审不通过后最多修复几轮，超过就停下等人
+
+[jenny]
+stale_minutes = 10        # 运行中的阶段多久没有心跳算卡死
+gate_reminder_hours = 4   # 等人确认超过多久提醒一次
+budget_warn_ratio = 0.8
+diagnose = true           # 需求卡住时是否让 Claude 读日志写一份 diagnosis.md
+diagnose_model = "haiku"
+# 有新告警时执行的命令（可选），{message} 会被替换。例：
+# notify_command = ["powershell", "-NoProfile", "-Command", "msg * '{message}'"]
+notify_command = []
+
+# ---- 工具适配器 --------------------------------------------------------
+# command 里的占位符：{prompt} {model} {mode} {effort}（取自 [agents.xxx] 的 effort）{timeout}（秒）{worktree}
+# 某个占位符的值为空时，该参数连同它前面的 --flag 一起省略。
+# {prompt} 是一句很短的话，指向工作树里的 .lane/prompt-<阶段>.md。
+
+[agents.claude]
+command = ["claude", "-p", "{prompt}", "--model", "{model}", "--permission-mode", "{mode}", "--effort", "{effort}", "--output-format", "text"]
+max_parallel = 2
+effort = "high"           # 所有 Claude 阶段（含诊断）共用：low | medium | high | xhigh | max；留空 = 不传 --effort
+
+[agents.agy]
+command = ["agy", "-p", "{prompt}", "--model", "{model}", "--mode", "{mode}", "--print-timeout", "{timeout}s", "--output-format", "json", "--settings", "{settings}"]
+max_parallel = 2
+# 无头模式下 agy 不能询问权限：不在允许列表里的命令会被拒绝，并且整个会话立刻结束。
+# 这里和各项目的 allow_commands 列出可以执行的命令（正则，从命令开头匹配），只对本次会话生效，
+# 会和你在 agy 里已有的全局允许列表（git、python、dir 等）合并。
+allow_commands = []
+
+# ---- 阶段 --------------------------------------------------------------
+# writes: 该阶段允许改动的路径前缀（相对工作树，{req_dir} = docs/reqs/<编号>/，
+#         {test_paths} = 项目的 test_paths）。["*"] 表示不限制。
+# on_violation: revert = 撤销越界改动并继续；block = 停下等人。
+
+[stages.plan]
+agent = "claude"
+model = "opus"
+mode = "acceptEdits"
+timeout_min = 30
+writes = ["{req_dir}"]
+on_violation = "revert"
+
+[stages.code]
+agent = "agy"
+model = "gemini-3.8-flash-high"   # 可填 `agy models` 列出的 ID；留空 = 用 agy 的默认模型
+mode = "accept-edits"
+timeout_min = 90
+writes = ["*"]
+
+[stages.fix]
+agent = "agy"
+model = "gemini-3.8-flash-high"
+mode = "accept-edits"
+timeout_min = 60
+writes = ["*"]
+
+[stages.review]
+agent = "claude"
+model = "sonnet"
+mode = "acceptEdits"
+timeout_min = 30
+writes = ["{req_dir}"]
+on_violation = "revert"
+
+[stages.test]             # 测试设计：只写测试并编译，不占共享资源，可以并行
+agent = "agy"
+model = "gemini-3.8-flash-high"
+mode = "accept-edits"
+timeout_min = 90
+writes = ["{req_dir}", "{test_paths}"]
+on_violation = "block"
+
+[stages.itest]            # 集成运行：启动应用、跑自动化测试、对接 CoverageHub
+agent = "agy"
+max_parallel = 1          # 集成测试排队：同一时间只跑一个（共享测试数据库和 CoverageHub）
+model = "gemini-3.8-flash-high"
+mode = "accept-edits"
+timeout_min = 60
+writes = ["{req_dir}", "{test_paths}"]
+on_violation = "block"
+
+[stages.report]
+agent = "claude"
+model = "sonnet"
+mode = "acceptEdits"
+timeout_min = 20
+writes = ["{req_dir}"]
+on_violation = "revert"
+
+# ---- 项目 --------------------------------------------------------------
+# 每个要管理的仓库登记一次。示例（去掉注释并改路径）：
+#
+# [projects.hronetime]
+# repo = "C:/Users/you/Documents/neo-dev/HROneTime"
+# base = "main"                      # 需求分支从哪里切出
+# test_paths = ["tests/", "e2e/"]    # 测试阶段允许改动的目录
+# coveragehub_project = "HROneTime"  # CoverageHub 里的项目 ID，留空则测试阶段不走 CoverageHub
+# rules = "config/rules/hronetime.md"      # 项目规则，用 lane rules <项目> 从 templates/AGENTS.md 创建后编辑
+# copy_files = [".agents/", "tests/.env"]  # 被 git 忽略、但工作树里需要的本地文件，建需求时复制过去
+#
+# 每个项目用 [projects.<名称>.verify] 声明"怎么构建、怎么验证"。这些命令会写进编码、修复、
+# 评审、测试阶段的提示词，由 Agent 执行。用不到的项留空或不写。
+# {port} = port_base + 需求编号（每条需求一个端口），{worktree} = 该需求的工作树路径。
+#
+# 一个 Node 项目的例子：
+# [projects.myapp.verify]
+# setup_cmd = "npm ci"                      # 新工作树里还原依赖
+# build_cmd = "npm run build"               # 构建
+# unit_cmd  = "npm test"                    # 单元测试
+# serve_cmd = "npm start"                   # 从工作树启动被测应用
+# ready_url = "http://localhost:{port}/health"   # 应用就绪的判断
+# ta_cmd    = "npx playwright test"         # 自动化测试
+# port_base = 64000
+# [projects.myapp.verify.env]               # 跑自动化测试时的环境变量
+# PORT = "{port}"
+# BASE_URL = "http://localhost:{port}"
+
+[projects.hronetime]
+repo = "C:/Users/ZouJun(NEO)/Documents/neo-dev/HROneTime"
+base = "feat/fp11-password-reset-tests"   # TC27 等 FP11 用例在这个分支上，还没有合入 main
+test_paths = ["HROneTime.Tests/", "HROneTime.UITests/"]
+coveragehub_project = ""   # 基本流水线跑通后再填 "HROneTime" 启用 CoverageHub
+rules = "config/rules/hronetime.md"
+copy_files = [".agents/", "HROneTime.UITests/.env"]
+# agy 在这个项目里可以执行的命令。写法是正则，用 [.] 表示点号。
+allow_commands = [
+    '.*NuGet[.]exe restore .*',                 # 还原依赖
+    '.*MSBuild[.]exe.* .*',                     # 构建
+    '.*HROneTime[.]Tests[.]exe.*',              # 单元测试
+    'dotnet (test|build) .*',                   # 自动化测试
+    '.*iisexpress[.]exe.* .*',                  # 启动被测应用
+    'Start-Process .*iisexpress.*',             # 后台启动被测应用
+    'Stop-Process .*',                          # 停掉被测应用
+    'taskkill .*iisexpress.*',
+    '[$]env:TEST_BASE_URL ?=.*',                # 设置测试用的环境变量
+    'Invoke-WebRequest .*localhost.*',          # 就绪检查
+    'curl([.]exe)? .*localhost.*',
+    'Test-Path .*',
+]
+
+[projects.hronetime.verify]
+setup_cmd = 'nuget\NuGet.exe restore HROneTime_v01.sln'
+build_cmd = '& "C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe" HROneTime_v01.sln /t:Build /p:Configuration=Debug'
+unit_cmd = '.\HROneTime.Tests\bin\Debug\HROneTime.Tests.exe'
+serve_cmd = '& "C:\Program Files\IIS Express\iisexpress.exe" /path:"{worktree}\Web" /port:{port}'
+ready_url = "http://localhost:{port}/"
+# 试点阶段只跑 FP11（密码找回与重置）；要跑全量时去掉 --filter
+ta_cmd = 'dotnet test HROneTime.UITests\HROneTime.UITests.csproj --filter "FullyQualifiedName~FP11" --logger "console;verbosity=normal"'
+port_base = 64000
+
+[projects.hronetime.verify.env]
+TEST_BASE_URL = "http://localhost:{port}"
