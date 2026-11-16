@@ -166,7 +166,9 @@ ROUTES = {
 
 def serve(cfg: Config, open_browser: bool = True) -> None:
     path, created = ensure_server_config(cfg.home)
-    settings = read_server_config(cfg.home)
+    if created:
+        print(f"已创建 {path}（用户名 admin，密码为空）。")
+    settings = read_server_config(cfg.home)   # 密码为空时在这里退出，并说明怎么办
     host = settings.get("server", {}).get("host", "0.0.0.0")
     port = int(settings.get("server", {}).get("port", 8770))
     Handler.home, Handler.sessions = cfg.home, Sessions(cfg.home)
@@ -176,7 +178,7 @@ def serve(cfg: Config, open_browser: bool = True) -> None:
     if host not in ("127.0.0.1", "localhost"):
         print(f"其他机器访问：http://<这台机器的名称或 IP>:{port}/  （连不上时检查 Windows 防火墙是否放行 {port} 端口）")
         print("注意：这是明文 HTTP。要经过公网访问，请放在 HTTPS 反向代理后面。")
-    print(f"用户名和密码在 {path}" + ("（刚刚创建，密码是随机生成的）" if created else ""))
+    print(f"用户名和密码在 {path}")
     print("Ctrl+C 停止。")
     if open_browser:
         webbrowser.open(local)

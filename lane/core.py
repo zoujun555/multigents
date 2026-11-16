@@ -36,11 +36,22 @@ def age_minutes(stamp: str | None) -> float:
 
 # ---- 配置 --------------------------------------------------------------
 
+def merge(base: dict, over: dict) -> dict:
+    """把 over 合并到 base 上：表逐层合并，其他类型（含列表）整个替换。"""
+    out = dict(base)
+    for key, value in over.items():
+        out[key] = merge(out[key], value) if isinstance(value, dict) and isinstance(out.get(key), dict) else value
+    return out
+
+
 class Config:
     def __init__(self, home: Path = HOME):
         self.home = home
         path = Path(os.environ.get("LANE_CONFIG") or home / "config" / "lane.toml")
         self.data = tomllib.loads(path.read_text(encoding="utf-8"))
+        local = home / "config" / "local.toml"   # 本机专用（项目登记、本机路径），不提交到 Git
+        if local.exists():
+            self.data = merge(self.data, tomllib.loads(local.read_text(encoding="utf-8")))
         self.state_dir = home / "state"
         self.lanes_dir = self.state_dir / "lanes"
         self.logs_dir = self.state_dir / "logs"
@@ -66,7 +77,8 @@ class Config:
         return self.data["agents"][name]
 
     def worktree_root(self) -> Path:
-        root = Path(self.get("workbench", "worktree_root", "worktrees"))
+        raw = os.path.expandvars(str(self.get("workbench", "worktree_root", "worktrees")))
+        root = Path(raw).expanduser()   # 支持 ~ 和 %USERPROFILE% 这类写法
         return root if root.is_absolute() else self.home / root
 
 

@@ -52,16 +52,18 @@ for line in (ROOT / "config" / "lane.toml").read_text(encoding="utf-8").splitlin
     elif line.startswith("poll_seconds"):
         line = "poll_seconds = 1"
     lines.append(line)
-lane_toml = "\n".join(lines) + f'\n[projects.demo]\nrepo = {json.dumps(str(repo))}\nbase = "main"\ntest_paths = ["tests/"]\n'
+lane_toml = "\n".join(lines) + "\n"
+local_toml = f'[projects.demo]\nrepo = {json.dumps(str(repo))}\nbase = "main"\ntest_paths = ["tests/"]\n'
 assert lane_toml.count("fake_agent") == 2
 (home / "config" / "lane.toml").write_text(lane_toml, encoding="utf-8")
+(home / "config" / "local.toml").write_text(local_toml, encoding="utf-8")   # 项目登记在本机专用文件里
 
 with socket.socket() as s:
     s.bind(("127.0.0.1", 0))
     port = s.getsockname()[1]
 password = secrets.token_urlsafe(9)   # 只用于这次自检的临时目录
 (home / "config" / "server.toml").write_text(
-    f'[server]\nhost = "127.0.0.1"\nport = {port}\n[login]\nusername = "chris"\npassword = "{password}"\n', encoding="utf-8")
+    f'[server]\nhost = "127.0.0.1"\nport = {port}\n[login]\nusername = "admin"\npassword = "{password}"\n', encoding="utf-8")
 
 env = {**os.environ, "LANE_HOME": str(home), "PYTHONPATH": str(ROOT), "PYTHONIOENCODING": "utf-8"}
 server = subprocess.Popen([sys.executable, "-m", "lane", "ui", "--no-browser"], env=env,
@@ -110,12 +112,12 @@ try:
     assert call("/api/board")[0] == 401
     assert call("/api/alerts")[0] == 401
     assert call("/api/lane/new", {"project": "demo", "title": "x"})[0] == 401
-    assert call("/api/login", {"username": "chris", "password": "wrong"})[0] == 401
-    assert call("/api/login", {"username": "chris", "password": password}, headers={"Content-Type": "application/json"})[0] == 403, \
+    assert call("/api/login", {"username": "admin", "password": "wrong"})[0] == 401
+    assert call("/api/login", {"username": "admin", "password": password}, headers={"Content-Type": "application/json"})[0] == 403, \
         "不带 X-Requested-With 的 POST 应被拒绝"
 
     # 登录
-    assert call("/api/login", {"username": "chris", "password": password})[0] == 200
+    assert call("/api/login", {"username": "admin", "password": password})[0] == 200
     assert call("/api/session")[1] == {"logged_in": True}
     board = call("/api/board")[1]
     assert board["lanes"] == [] and board["projects"] == ["demo"] and board["scheduler"]["running"] is False
@@ -170,12 +172,21 @@ try:
 
     # 配置：读取、校验、保存、不能碰 server.toml
     files = call("/api/config")[1]["files"]
-    assert files == ["lane.toml", "templates/AGENTS.md"], files
+    assert files == ["lane.toml", "local.toml", "templates/AGENTS.md"], files
     text = call("/api/config/file?key=lane.toml")[1]["text"]
     assert call("/api/config/file", {"key": "lane.toml", "text": "[workbench\nbroken"})[0] == 400
     assert call("/api/config/file", {"key": "lane.toml", "text": text.replace("[stages.itest]", "[stages.gone]")})[0] == 400
     assert call("/api/config/file", {"key": "lane.toml", "text": text.replace("max_parallel = 2", "max_parallel = 3", 1)})[0] == 200
     assert call("/api/board")[1]["max_parallel"] == 3 and (home / "config" / "lane.toml.bak").exists()
+    # local.toml：改动会合并进配置；缺 repo 或格式不对的不保存
+    local = call("/api/config/file?key=local.toml")[1]["text"]
+    assert "[projects.demo]" in local
+    assert call("/api/config/file", {"key": "local.toml", "text": '[projects.x]\nbase = "main"\n'})[0] == 400, "项目缺 repo 不能保存"
+    assert call("/api/config/file", {"key": "local.toml", "text": "[projects\nbroken"})[0] == 400
+    more = local + f'\n[projects.second]\nrepo = {json.dumps(str(repo))}\n'
+    assert call("/api/config/file", {"key": "local.toml", "text": more})[0] == 200
+    assert call("/api/board")[1]["projects"] == ["demo", "second"], "local.toml 的改动应立即合并进配置"
+    assert (home / "config" / "local.toml.bak").exists()
     assert call("/api/config/file", {"key": "rules/demo.md", "text": "- 规则\n"})[0] == 200
     assert (home / "config" / "rules" / "demo.md").read_text(encoding="utf-8") == "- 规则\n"
     for bad in ("server.toml", "../lane/core.py", "rules/../server.toml", "rules/a.txt"):
@@ -190,8 +201,8 @@ try:
 
     # 连续输错密码后锁定
     for _ in range(5):
-        assert call("/api/login", {"username": "chris", "password": "x"})[0] == 401
-    assert call("/api/login", {"username": "chris", "password": password})[0] == 429, "5 次错误后应暂时锁定"
+        assert call("/api/login", {"username": "admin", "password": "x"})[0] == 401
+    assert call("/api/login", {"username": "admin", "password": password})[0] == 429, "5 次错误后应暂时锁定"
     print("全部通过")
 finally:
     server.kill()

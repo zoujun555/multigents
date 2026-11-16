@@ -159,7 +159,7 @@ def run_stage(cfg: Config, lane: Lane) -> None:
             outcome = "limit"
         elif denied and status == "blocked":
             note = ("工具执行了不在允许列表里的命令，被拒绝后会话直接结束。"
-                    "在 config/lane.toml 的 allow_commands 里补上需要的命令后 resume；原说明：" + note)
+                    "在 config/local.toml 里该项目的 allow_commands（或 lane.toml 里 [agents.agy] 的 allow_commands）补上需要的命令后 resume；原说明：" + note)
         if outcome == "error" and status != "blocked":
             note = (note + "；" if note else "") + "工具退出码非 0，但产出文件齐全"
     try:

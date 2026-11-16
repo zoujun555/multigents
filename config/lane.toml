@@ -4,7 +4,12 @@
 max_parallel = 2          # 同时运行的阶段总数（跨所有需求）
 poll_seconds = 15         # 调度器轮询间隔
 limit_pause_minutes = 30  # 工具报告用量额度用完时，暂停它多久再重试（需求留在原阶段排队，不算卡住）
-worktree_root = "worktrees"   # 相对工作台目录，或写绝对路径
+# 工作空间：所有需求的工作树放在这里（<工作空间>/<项目>/REQ-xxx）。默认在工作台文件夹下的 worktrees/。
+# 想放到别处（比如另一个盘、一个短路径），在 config/local.toml 里写 [workbench] worktree_root = "D:/lane-ws"，
+# 不要改这里：绝对路径是本机的，不应提交。支持 ~ 和环境变量（%USERPROFILE%）。路径越短越好，
+# 因为 .NET 项目的包路径很长，Windows 默认只允许 260 个字符。
+# 只对新建的需求生效；已有需求的工作树留在原来的位置（状态里记着它的路径）。
+worktree_root = "worktrees"
 branch_prefix = "lane/"
 
 # 每天每个工具最多启动多少次无头会话。到上限后需求排队等待，不算卡住。
@@ -104,65 +109,5 @@ writes = ["{req_dir}"]
 on_violation = "revert"
 
 # ---- 项目 --------------------------------------------------------------
-# 每个要管理的仓库登记一次。示例（去掉注释并改路径）：
-#
-# [projects.hronetime]
-# repo = "C:/Users/you/Documents/neo-dev/HROneTime"
-# base = "main"                      # 需求分支从哪里切出
-# test_paths = ["tests/", "e2e/"]    # 测试阶段允许改动的目录
-# coveragehub_project = "HROneTime"  # CoverageHub 里的项目 ID，留空则测试阶段不走 CoverageHub
-# rules = "config/rules/hronetime.md"      # 项目规则，用 lane rules <项目> 从 templates/AGENTS.md 创建后编辑
-# copy_files = [".agents/", "tests/.env"]  # 被 git 忽略、但工作树里需要的本地文件，建需求时复制过去
-#
-# 每个项目用 [projects.<名称>.verify] 声明"怎么构建、怎么验证"。这些命令会写进编码、修复、
-# 评审、测试阶段的提示词，由 Agent 执行。用不到的项留空或不写。
-# {port} = port_base + 需求编号（每条需求一个端口），{worktree} = 该需求的工作树路径。
-#
-# 一个 Node 项目的例子：
-# [projects.myapp.verify]
-# setup_cmd = "npm ci"                      # 新工作树里还原依赖
-# build_cmd = "npm run build"               # 构建
-# unit_cmd  = "npm test"                    # 单元测试
-# serve_cmd = "npm start"                   # 从工作树启动被测应用
-# ready_url = "http://localhost:{port}/health"   # 应用就绪的判断
-# ta_cmd    = "npx playwright test"         # 自动化测试
-# port_base = 64000
-# [projects.myapp.verify.env]               # 跑自动化测试时的环境变量
-# PORT = "{port}"
-# BASE_URL = "http://localhost:{port}"
-
-[projects.hronetime]
-repo = "C:/Users/ZouJun(NEO)/Documents/neo-dev/HROneTime"
-base = "feat/fp11-password-reset-tests"   # TC27 等 FP11 用例在这个分支上，还没有合入 main
-test_paths = ["HROneTime.Tests/", "HROneTime.UITests/"]
-coveragehub_project = ""   # 基本流水线跑通后再填 "HROneTime" 启用 CoverageHub
-rules = "config/rules/hronetime.md"
-copy_files = [".agents/", "HROneTime.UITests/.env"]
-# agy 在这个项目里可以执行的命令。写法是正则，用 [.] 表示点号。
-allow_commands = [
-    '.*NuGet[.]exe restore .*',                 # 还原依赖
-    '.*MSBuild[.]exe.* .*',                     # 构建
-    '.*HROneTime[.]Tests[.]exe.*',              # 单元测试
-    'dotnet (test|build) .*',                   # 自动化测试
-    '.*iisexpress[.]exe.* .*',                  # 启动被测应用
-    'Start-Process .*iisexpress.*',             # 后台启动被测应用
-    'Stop-Process .*',                          # 停掉被测应用
-    'taskkill .*iisexpress.*',
-    '[$]env:TEST_BASE_URL ?=.*',                # 设置测试用的环境变量
-    'Invoke-WebRequest .*localhost.*',          # 就绪检查
-    'curl([.]exe)? .*localhost.*',
-    'Test-Path .*',
-]
-
-[projects.hronetime.verify]
-setup_cmd = 'nuget\NuGet.exe restore HROneTime_v01.sln'
-build_cmd = '& "C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe" HROneTime_v01.sln /t:Build /p:Configuration=Debug'
-unit_cmd = '.\HROneTime.Tests\bin\Debug\HROneTime.Tests.exe'
-serve_cmd = '& "C:\Program Files\IIS Express\iisexpress.exe" /path:"{worktree}\Web" /port:{port}'
-ready_url = "http://localhost:{port}/"
-# 试点阶段只跑 FP11（密码找回与重置）；要跑全量时去掉 --filter
-ta_cmd = 'dotnet test HROneTime.UITests\HROneTime.UITests.csproj --filter "FullyQualifiedName~FP11" --logger "console;verbosity=normal"'
-port_base = 64000
-
-[projects.hronetime.verify.env]
-TEST_BASE_URL = "http://localhost:{port}"
+# 项目（仓库路径、构建和测试命令、允许 agy 执行的命令）带有本机路径，不放在这个文件里：
+# 写在 config/local.toml（不提交到 Git），写法见 config/local.toml.example。

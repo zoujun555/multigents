@@ -18,25 +18,27 @@ host = "0.0.0.0"     # 0.0.0.0 = 允许其他机器访问；只限本机用 "127
 port = 8770
 
 [login]
-username = "chris"
-password = "{password}"
+username = "admin"
+password = ""        # 必须自己填写；密码为空时 lane ui 不会启动
 '''
 
 
 def ensure_server_config(home: Path) -> tuple[Path, bool]:
-    """没有 server.toml 时创建一份，密码随机生成。返回 (路径, 是否新建)。"""
+    """没有 server.toml 时按模板创建一份（密码为空）。返回 (路径, 是否新建)。"""
     path = home / "config" / "server.toml"
     if path.exists():
         return path, False
-    path.write_text(TEMPLATE.format(password=secrets.token_urlsafe(12)), encoding="utf-8")
+    path.write_text(TEMPLATE, encoding="utf-8")
     return path, True
 
 
 def read_server_config(home: Path) -> dict:
     data = tomllib.loads((home / "config" / "server.toml").read_text(encoding="utf-8"))
     login = data.get("login", {})
-    if not login.get("username") or not login.get("password"):
-        raise SystemExit("config/server.toml 的 [login] 里必须有 username 和 password")
+    if not login.get("username"):
+        raise SystemExit("config/server.toml 的 [login] 里必须有 username")
+    if not login.get("password"):   # 页面能启动 Agent、改它们可以执行的命令，不允许无密码访问
+        raise SystemExit("config/server.toml 里的 password 是空的。请先在 [login] 里填写密码，再重新启动 lane ui。")
     return data
 
 

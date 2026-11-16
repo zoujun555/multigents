@@ -2,8 +2,7 @@ state/
 worktrees/
 __pycache__/
 config/server.toml
-config/*.bak
-config/rules/*.bak
+*.bak
 *.tmp
 config/local.toml
 config/rules/*.md

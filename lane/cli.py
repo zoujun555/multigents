@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -77,7 +78,7 @@ def cmd_rules(cfg: Config, args) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(source.read_text(encoding="utf-8-sig"), encoding="utf-8")
     print(f"已从 {source} 创建 {target}")
-    print(f"请按项目情况编辑它，并确认 config/lane.toml 的 [projects.{args.project}] 里有：")
+    print(f"请按项目情况编辑它，并确认 config/local.toml 的 [projects.{args.project}] 里有：")
     print(f'  rules = "config/rules/{args.project}.md"')
 
 
@@ -88,13 +89,18 @@ def cmd_doctor(cfg: Config, args) -> None:
         print(f"{'OK  ' if exe else '缺失'} {name}: {exe or agent['command'][0] + ' 不在 PATH 里'}")
         ok &= bool(exe)
     print(f"{'OK  ' if shutil.which('git') else '缺失'} git")
+    root = cfg.worktree_root()
+    anchor = next(p for p in (root, *root.parents) if p.exists())   # 目录可能还没建：看它最近的已存在的上级
+    writable = os.access(anchor, os.W_OK)
+    print(f"{'OK  ' if writable else '问题'} 工作空间（各需求的工作树）：{root}" + ("" if writable else f"（{anchor} 不可写）"))
+    ok &= writable
     for stage in AUTO_STAGES + ("diagnose",):
         for f in ([f"{stage}.md"] + (["itest-coveragehub.md"] if stage == "itest" else [])):
             if not (cfg.home / "prompts" / f).exists():
                 print(f"缺失 prompts/{f}")
                 ok = False
     if not cfg.projects:
-        print("提示 config/lane.toml 里还没有登记项目（[projects.xxx]）")
+        print("提示 config/local.toml 里还没有登记项目（[projects.xxx]，写法见 config/local.toml.example）")
     for name, proj in cfg.projects.items():
         repo = Path(proj["repo"])
         good = (repo / ".git").exists()

@@ -43,11 +43,14 @@ assert "0.05" in config
 config = config.replace("timeout_min = 90", "timeout_min = -0.9")  # 编码阶段约 6 秒后超时
 (home / "config" / "rules").mkdir()
 (home / "config" / "rules" / "demo.md").write_text("- 演示规则：断言必须严格匹配\n", encoding="utf-8")
-config += (f'\n[projects.demo]\nrepo = {json.dumps(str(repo))}\nbase = "main"\ntest_paths = ["tests/"]\n'
+workspace = tmp / "ws"
+local = (f'[workbench]\nworktree_root = {json.dumps(str(workspace))}\n[projects.demo]\nrepo ={json.dumps(str(repo))}\nbase = "main"\ntest_paths = ["tests/"]\n'
            'rules = "config/rules/demo.md"\ncopy_files = ["local/", "missing.txt"]\nallow_commands = ["make .*"]\n'
            '[projects.demo.verify]\nbuild_cmd = "make build"\nserve_cmd = "serve --dir {worktree} --port {port}"\n'
            'ta_cmd = "make e2e"\nport_base = 64000\n[projects.demo.verify.env]\nBASE_URL = "http://localhost:{port}"\n')
+assert "[projects." not in config, "项目登记应在 local.toml 里，不在 lane.toml 里"
 (home / "config" / "lane.toml").write_text(config, encoding="utf-8")
+(home / "config" / "local.toml").write_text(local, encoding="utf-8")
 
 env = {**os.environ, "LANE_HOME": str(home), "PYTHONPATH": str(ROOT), "PYTHONIOENCODING": "utf-8"}
 
@@ -84,6 +87,8 @@ out = lane("run", "--once")
 
 s1, s2, s3 = state(1), state(2), state(3)
 wt1 = Path(s1["worktree"])
+assert workspace in wt1.parents and (workspace / "demo" / "REQ-001").exists(), f"工作树应在配置的工作空间里：{wt1}"
+assert not (home / "worktrees").exists(), "默认位置不应再被使用"
 assert s1["stage"] == "merge_gate" and s1["status"] == "waiting", s1
 assert s1["round"] == 1, "应经过一轮修复"
 assert (wt1 / "local" / ".env").read_text(encoding="utf-8") == "X=1\n", "copy_files 应把被忽略的本地文件复制进工作树"

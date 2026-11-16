@@ -23,7 +23,7 @@ Jenny（随调度器运行）：每轮检查所有需求 → 新出现的问题�
 |---|---|
 | 阶段之间怎么交接 | 只靠文件。每条需求在自己的分支里有 `docs/reqs/REQ-xxx/`，各阶段读上一阶段的文件、写自己的文件。每个阶段都是全新的无头会话，不继承上下文。 |
 | 工作台怎么知道下一步 | 结果文件第一行的标记：`selftest.md`、`test-design.md`、`test-report.md` 写 `RESULT: ...`，`review.md` 写 `VERDICT: PASS/FAIL`。 |
-| 多条需求怎么隔离 | 每条需求一个分支 `lane/REQ-xxx` 加一个 Git worktree（在 `worktrees/<项目>/REQ-xxx`），互不影响，弄乱了删掉重建。 |
+| 多条需求怎么隔离 | 每条需求一个分支 `lane/REQ-xxx` 加一个 Git worktree（在工作空间下的 `<项目>/REQ-xxx`，工作空间默认是 `worktrees/`，可配置），互不影响，弄乱了删掉重建。 |
 | 并行和预算 | `max_parallel` 限制同时运行的阶段总数；每个工具有自己的并发上限和每日启动次数上限。到上限的需求排队，不算卡住。 |
 | 评审独立性 | 评审用的是另一家模型的新会话；它改了产品代码会被工作台自动撤销并记录。测试设计和集成测试阶段改了测试目录以外的文件会停下等你。 |
 | 无人可问时 | 提示词要求 Agent 不提问，把问题写进结果文件并标 BLOCKED。超时会被终止。两种情况都由 Jenny 上报。 |
@@ -35,21 +35,24 @@ Jenny（随调度器运行）：每轮检查所有需求 → 新出现的问题�
 ```
 config/rules/      每个项目的规则文件（由 lane rules 从模板创建，你来编辑）
 templates/AGENTS.md  规则模板
-config/lane.toml   全部配置：并发、预算、每个阶段用哪个工具和模型、项目登记
+config/lane.toml   通用配置：并发、预算、每个阶段用哪个工具和模型（提交到 Git）
+config/local.toml  本机专用：已登记的项目（含本机路径）、项目的命令和允许规则（不提交；写法见 local.toml.example）
+config/local.toml.example  local.toml 的模板，含一个完整的 .NET 项目例子
 prompts/           每个阶段的提示词（plan / code / fix / review / test / report / diagnose）
 lane/              工具本身（Python 标准库，无第三方依赖）
 tests/run_demo.py  用假 Agent 跑完整流程的自检，不耗额度
 tests/run_ui_check.py  网页界面的自检（登录、接口、操作、配置校验），不耗额度
 lane/ui/           网页界面（服务、接口、页面和中英文资源）
-config/server.toml 网页界面的地址、端口、用户名和密码（首次运行 lane ui 时生成）
+config/server.toml 网页界面的地址、端口、用户名和密码（首次运行 lane ui 时生成；不提交）
+config/server.toml.example  server.toml 的模板（用户名 admin，密码为空，必须自己填）
 state/             运行状态和日志（自动生成）
-worktrees/         各需求的工作树（自动生成）
+worktrees/         各需求的工作树（自动生成）。默认的工作空间；要放到别处，在 config/local.toml 里设 [workbench] worktree_root
 state/alerts.jsonl 告警历史（自动生成，所有项目一份，每条带项目字段；在看板的"告警历史"里查看和按项目筛选）
 ```
 
 ## 开始使用
 
-1. **登记项目**：在 `config/lane.toml` 末尾照示例加一段 `[projects.xxx]`。
+1. **登记项目**：把 `config/local.toml.example` 复制成 `config/local.toml`，照例子写自己的 `[projects.xxx]`。项目登记带本机路径，所以放在不提交的 `local.toml` 里；它会合并到 `lane.toml` 上。
 2. **项目规则**：`.\lane.cmd rules <项目>` 把 `templates/AGENTS.md` 复制成 `config/rules/<项目>.md`，按项目情况编辑（`--from <文件>` 可以改用别的起点，比如项目自己的 AGENTS.md）。编码、修复、评审、测试四个阶段的提示词会带上它。规则里"先给思路等确认""停下提问"这类要求，在流水线里统一变成"写进结果文件并标 BLOCKED"。
 3. **本地文件**：工作树只包含已提交的内容。被 git 忽略但运行需要的文件（如 `.agents/`、测试用的 `.env`）写进项目的 `copy_files`，建需求时会复制过去。复制的是建需求那一刻的内容。
 4. **检查**：`.\lane.cmd doctor`，全部 OK 再继续。
@@ -79,24 +82,24 @@ state/alerts.jsonl 告警历史（自动生成，所有项目一份，每条带�
 .\lane.cmd ui
 ```
 
-启动后在浏览器打开 `http://127.0.0.1:8770/`。第一次启动会创建 `config/server.toml`，用户名是 `chris`，密码随机生成，**打开这个文件就能看到**，也可以直接改。
+启动后在浏览器打开 `http://127.0.0.1:8770/`。第一次启动会按模板创建 `config/server.toml`（用户名 `admin`，**密码为空**），并提示你去填写；**密码为空时 `lane ui` 不会启动**。在 `[login]` 里填好 `password` 后再启动一次。用户名和密码都可以随时改，改完已登录的人要重新登录。
 
 | 页面 | 内容 | 能做的事 |
 |---|---|---|
 | 看板 | 每条需求所处的阶段、需要你处理的事项、当前告警、告警历史（可按项目筛选）、今日用量和预算、调度器状态 | 启动和停止调度器、新建需求 |
 | 需求 | 各阶段产出的文件（规格、评审、测试报告、汇总等）、经过和耗时、最近的日志 | 批准、带意见退回、从指定阶段继续、清理或放弃 |
 | 统计 | 各阶段运行次数和耗时、评审一次通过率、平均修复轮次、卡住的原因、每天各工具的会话数 | 按项目和创建日期筛选 |
-| 配置 | `lane.toml`、各项目的规则文件、规则模板 | 文本编辑并保存；新建项目规则 |
+| 配置 | `lane.toml`、`local.toml`、各项目的规则文件、规则模板 | 文本编辑并保存；新建项目规则 |
 
 - **语言**：右上角切换中文和英文。界面文字在 `lane/ui/static/i18n/zh.json` 和 `en.json` 里。后端返回的提示和需求的说明目前只有中文。
-- **配置保存**：`lane.toml` 保存前会校验，格式不对或缺少必要内容时不保存并给出原因；上一版保留为同目录的 `.bak`。`server.toml` 不能在网页上查看或修改。
+- **配置保存**：`lane.toml` 和 `local.toml` 保存前会校验，格式不对或缺少必要内容时不保存并给出原因；上一版保留为同目录的 `.bak`。`server.toml` 不能在网页上查看或修改。
 - **远程访问**：默认监听 `0.0.0.0`，其他机器用 `http://<这台机器>:8770/` 打开；连不上时在 Windows 防火墙放行 8770 端口。只想本机使用，把 `server.toml` 里的 `host` 改成 `127.0.0.1`。同一地址连续输错 5 次密码会被锁定 5 分钟。
 - **安全**：这是明文 HTTP，登录后能启动 Agent、能修改它们可以执行的命令。只在可信的网络里开放；要经公网访问，放在 HTTPS 反向代理后面。
 - 在网页上启动的调度器在后台运行，输出写到 `state/scheduler.log`。同一时间只能有一个调度器，命令行的 `lane run` 和网页上的"启动"互斥。
 
 ## 每个项目怎么构建和验证
 
-每条需求都要用**自己工作树里构建出来的版本**来验证，而不是机器上已经部署的版本。每个项目在 `config/lane.toml` 里用 `[projects.<名称>.verify]` 声明做法，各类项目回答同样的几个问题，用不到的留空：
+每条需求都要用**自己工作树里构建出来的版本**来验证，而不是机器上已经部署的版本。每个项目在 `config/local.toml` 里用 `[projects.<名称>.verify]` 声明做法，各类项目回答同样的几个问题，用不到的留空：
 
 | 配置项 | 回答的问题 |
 |---|---|
@@ -187,3 +190,33 @@ allow_commands = [
 | [github/spec-kit](https://github.com/github/spec-kit) | 规格的章节结构 | 可以叠加使用：想要更细的规格流程时，在目标仓库里装它，让规划阶段产出它的格式。它的 README 没提 agy，是否支持要查它的 integrations 文档 |
 | [kdlbs/kandev](https://github.com/kdlbs/kandev) | 没有借用 | 功能最接近（每步换工具的流水线，原生支持 Windows，agy 通过 ACP 接入），但它是带界面的整套系统，AGPL 许可证，agy 的 ACP 服务要手动安装。以后想要看板界面时值得试 |
 | [BloopAI/vibe-kanban](https://github.com/BloopAI/vibe-kanban) | 没有借用 | README 开头写明项目正在停止维护 |
+
+## 工作空间：工作树放在哪里
+
+每条需求的工作树都在同一个工作空间下，`<工作空间>/<项目>/REQ-xxx`。默认是工作台文件夹下的 `worktrees/`。想换地方，在 `config/local.toml` 里写：
+
+```toml
+[workbench]
+worktree_root = "D:/lane-ws"
+```
+
+- 写绝对路径，或相对工作台文件夹的路径；支持 `~` 和环境变量（`%USERPROFILE%`）。路径是本机的，所以写在不提交的 `local.toml` 里，不要改 `lane.toml`。
+- **路径越短越好**：.NET 项目的包路径很长，Windows 默认路径上限是 260 个字符，工作空间放得深，还原或构建可能失败。
+- 只对**新建**的需求生效。已有需求的工作树留在原处（状态里记着它的完整路径），合并后 `lane clean` 照常能移除。
+- `lane doctor` 会显示当前的工作空间，并检查它是否可写。
+
+## 哪些文件不提交
+
+以下文件带有本机路径、真实密码或运行产物，已在 `.gitignore` 里：
+
+| 文件 | 内容 | 模板 |
+|---|---|---|
+| `config/server.toml` | 网页登录的用户名和密码 | `config/server.toml.example` |
+| `config/local.toml` | 已登记的项目（本机路径、命令、允许规则） | `config/local.toml.example` |
+| `config/rules/*.md` | 各项目的规则（项目专属内容） | `templates/AGENTS.md` |
+| `config/*.bak`、`config/rules/*.bak` | 在网页上保存配置时留下的上一版 | |
+| `*.tmp` | 保存配置时的临时文件，只有崩溃时才会留下 | |
+| `state/` | 需求状态、日志、用量、告警历史 | |
+| `worktrees/` | 各需求的工作树 | |
+
+`python tests/check_repo_hygiene.py` 会检查：上面这些没有被跟踪、提交的文件里没有本机路径（`C:/Users/<名字>/…`）、两个模板都在、`server.toml.example` 里没有任何密码、密码为空时不能启动。提交前跑一遍。

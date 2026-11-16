@@ -1,0 +1,63 @@
+# 本机专用的项目登记。复制成 config/local.toml 后按自己的情况修改（local.toml 不提交到 Git）。
+# 里面的内容会合并到 lane.toml 上，同名的键以这里为准。
+# 网页界面的配置页也可以直接编辑 local.toml。
+#
+# 工作空间：所有需求的工作树放在哪里（默认是工作台文件夹下的 worktrees/）。取消注释并改成自己的路径：
+# [workbench]
+# worktree_root = "D:/lane-ws"
+#
+# 每个要管理的仓库登记一次。各项含义见文件末尾的完整例子。
+#
+# 每个项目用 [projects.<名称>.verify] 声明"怎么构建、怎么验证"。这些命令会写进编码、修复、
+# 评审、测试阶段的提示词，由 Agent 执行。用不到的项留空或不写。
+# {port} = port_base + 需求编号（每条需求一个端口），{worktree} = 该需求的工作树路径。
+#
+# 一个 Node 项目的例子：
+# [projects.myapp.verify]
+# setup_cmd = "npm ci"                      # 新工作树里还原依赖
+# build_cmd = "npm run build"               # 构建
+# unit_cmd  = "npm test"                    # 单元测试
+# serve_cmd = "npm start"                   # 从工作树启动被测应用
+# ready_url = "http://localhost:{port}/health"   # 应用就绪的判断
+# ta_cmd    = "npx playwright test"         # 自动化测试
+# port_base = 64000
+# [projects.myapp.verify.env]               # 跑自动化测试时的环境变量
+# PORT = "{port}"
+# BASE_URL = "http://localhost:{port}"
+
+# ---- 一个 .NET Framework + IIS Express 项目的完整例子 ------------------
+[projects.hronetime]
+repo = "C:/path/to/HROneTime"
+base = "main"
+test_paths = ["HROneTime.Tests/", "HROneTime.UITests/"]
+coveragehub_project = ""   # 填 CoverageHub 里的项目 ID 才会启用 CoverageHub
+rules = "config/rules/hronetime.md"
+copy_files = [".agents/", "HROneTime.UITests/.env"]
+# agy 在这个项目里可以执行的命令。写法是正则，用 [.] 表示点号。
+allow_commands = [
+    '.*NuGet[.]exe restore .*',                 # 还原依赖
+    '.*MSBuild[.]exe.* .*',                     # 构建
+    '.*HROneTime[.]Tests[.]exe.*',              # 单元测试
+    'dotnet (test|build) .*',                   # 自动化测试
+    '.*iisexpress[.]exe.* .*',                  # 启动被测应用
+    'Start-Process .*iisexpress.*',             # 后台启动被测应用
+    'Stop-Process .*',                          # 停掉被测应用
+    'taskkill .*iisexpress.*',
+    '[$]env:TEST_BASE_URL ?=.*',                # 设置测试用的环境变量
+    'Invoke-WebRequest .*localhost.*',          # 就绪检查
+    'curl([.]exe)? .*localhost.*',
+    'Test-Path .*',
+]
+
+[projects.hronetime.verify]
+setup_cmd = 'nuget\NuGet.exe restore HROneTime_v01.sln'
+build_cmd = '& "C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe" HROneTime_v01.sln /t:Build /p:Configuration=Debug'
+unit_cmd = '.\HROneTime.Tests\bin\Debug\HROneTime.Tests.exe'
+serve_cmd = '& "C:\Program Files\IIS Express\iisexpress.exe" /path:"{worktree}\Web" /port:{port}'
+ready_url = "http://localhost:{port}/"
+# 试点阶段只跑 FP11（密码找回与重置）；要跑全量时去掉 --filter
+ta_cmd = 'dotnet test HROneTime.UITests\HROneTime.UITests.csproj --filter "FullyQualifiedName~FP11" --logger "console;verbosity=normal"'
+port_base = 64000
+
+[projects.hronetime.verify.env]
+TEST_BASE_URL = "http://localhost:{port}"

@@ -20,7 +20,7 @@ ARTIFACTS = ("request.md", "spec.md", "selftest.md", "review.md", "test-design.m
              "summary.md", "feedback.md", "diagnosis.md")
 STAGE_ORDER = ("plan", "spec_gate", "code", "review", "fix", "test", "itest", "report", "merge_gate", "done")
 HISTORY_FILE = re.compile(r"^history/\d\d-[a-z-]+\.md$")
-CONFIG_KEY = re.compile(r"^(lane\.toml|templates/AGENTS\.md|rules/[A-Za-z0-9_-]+\.md)$")
+CONFIG_KEY = re.compile(r"^(lane\.toml|local\.toml|templates/AGENTS\.md|rules/[A-Za-z0-9_-]+\.md)$")
 
 
 # ---- 调度器 ------------------------------------------------------------
@@ -134,7 +134,7 @@ def config_path(home: Path, key: str) -> Path:
 
 def config_files(home: Path) -> list[str]:
     rules = sorted(f"rules/{p.name}" for p in (home / "config" / "rules").glob("*.md"))
-    return ["lane.toml", *rules, "templates/AGENTS.md"]
+    return ["lane.toml", "local.toml", *rules, "templates/AGENTS.md"]
 
 
 def config_read(home: Path, key: str) -> str:
@@ -158,6 +158,13 @@ def check_lane_toml(text: str) -> None:
     for name, agent in agents.items():
         if not isinstance(agent.get("command"), list) or not agent["command"]:
             raise SystemExit(f"[agents.{name}] 缺少 command")
+
+
+def check_local_toml(text: str) -> None:
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        raise SystemExit(f"TOML 格式错误：{exc}")
     for name, proj in data.get("projects", {}).items():
         if not proj.get("repo"):
             raise SystemExit(f"[projects.{name}] 缺少 repo")
@@ -167,6 +174,8 @@ def config_save(home: Path, key: str, text: str) -> str:
     path = config_path(home, key)
     if key == "lane.toml":
         check_lane_toml(text)
+    elif key == "local.toml":
+        check_local_toml(text)
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
         path.with_suffix(path.suffix + ".bak").write_bytes(path.read_bytes())   # 保留上一版
