@@ -5,3 +5,5 @@ config/server.toml
 config/*.bak
 config/rules/*.bak
 *.tmp
+config/local.toml
+config/rules/*.md
