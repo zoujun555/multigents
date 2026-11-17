@@ -25,10 +25,16 @@ function actions(data, refresh) {
   const items = [];
   if (data.status === "waiting") {
     const note = h("textarea", { rows: "3", placeholder: t("lane.reject_hint") });
+    // 批准规格时可以附带意见（编码、修复、评审阶段都会读到）；确认合并时没有这个框
+    const approveNotes = data.stage === "spec_gate" ? h("textarea", { rows: "3", placeholder: t("lane.approve_notes_hint") }) : null;
     items.push(
       h("p", {}, t(data.stage === "spec_gate" ? "lane.gate_spec" : "lane.gate_merge")),
+      approveNotes ? h("label", {}, t("lane.approve_notes_label"), approveNotes) : null,
       h("div", { class: "row" },
-        h("button", { class: "btn primary", onclick: async () => { if (await act("/api/lane/approve", { id })) refresh(); } }, t("lane.approve"))),
+        h("button", {
+          class: "btn primary",
+          onclick: async () => { if (await act("/api/lane/approve", { id, notes: approveNotes ? approveNotes.value : "" })) refresh(); },
+        }, t("lane.approve"))),
       h("label", {}, t("lane.reject_label"), note),
       h("div", { class: "row" },
         h("button", { class: "btn", onclick: async () => { if (await act("/api/lane/reject", { id, message: note.value })) refresh(); } }, t("lane.reject"))));
@@ -60,15 +66,32 @@ function actions(data, refresh) {
   return items;
 }
 
-function files(data) {
+function files(data, reload) {
   const view = h("div", { class: "file-view" }, h("p", { class: "muted" }, t("lane.pick_file")));
   const tabs = h("div", { class: "tabs" });
+  // 等待批准规格时，规格可以直接改；其他时候文件只读
+  const specEditable = data.status === "waiting" && data.stage === "spec_gate" && !data.archived;
+  const edit = (text) => {
+    const box = h("textarea", { class: "editor spec-editor", spellcheck: "false" });
+    box.value = text;
+    view.replaceChildren(
+      h("p", { class: "hint" }, t("lane.edit_hint")),
+      box,
+      h("div", { class: "row" },
+        h("button", { class: "btn primary", onclick: async () => { if (await act("/api/lane/spec", { id: data.id, text: box.value })) reload(); } }, t("lane.save_spec")),
+        h("button", { class: "btn", onclick: () => reload() }, t("cancel"))));
+    box.focus();
+  };
   const show = async (name, button) => {
     for (const b of tabs.children) b.classList.remove("active");
     button.classList.add("active");
     try {
       const res = await api(`/api/file?id=${encodeURIComponent(data.id)}&name=${encodeURIComponent(name)}`);
-      view.replaceChildren(markdown(res.text));
+      put(view,
+        specEditable && name === "spec.md"
+          ? h("div", { class: "row end" }, h("button", { class: "btn small", onclick: () => edit(res.text) }, t("lane.edit_spec")))
+          : null,
+        markdown(res.text));
     } catch (err) { toast(err.message, true); }
   };
   for (const name of data.files) {
@@ -104,7 +127,7 @@ export async function renderLane(root, id, isCurrent) {
         data.round ? ` · ${t("board.round", { n: data.round })}` : ""),
       data.note ? h("p", { class: data.status === "blocked" ? "note blocked" : "note" }, data.note) : null,
       h("section", { class: "panel" }, h("h2", {}, t("lane.actions")), actions(data, () => { lastKey = ""; refresh(); })),
-      h("section", { class: "panel" }, h("h2", {}, t("lane.files")), files(data)),
+      h("section", { class: "panel" }, h("h2", {}, t("lane.files")), files(data, () => { lastKey = ""; refresh(); })),
       h("section", { class: "panel" }, h("h2", {}, t("lane.history")), timeline(data)),
       h("section", { class: "panel" }, h("h2", {}, t("lane.log"), " ", h("span", { class: "muted small" }, data.log_name)),
         h("pre", { class: "log" }, data.log_tail || t("lane.no_log"))));

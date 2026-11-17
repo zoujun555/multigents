@@ -5,6 +5,7 @@
   - 第一次评审给 FAIL，并故意改一个产品文件（应被工作台撤销）；之后的评审给 PASS。
   - 标题里带"超时"的需求在编码阶段睡死（应被工作台按超时终止）。
 """
+import os
 import re
 import sys
 import time
@@ -17,7 +18,7 @@ req_id = re.search(r"REQ-\d+", prompt).group(0)
 title = prompt.splitlines()[0]
 req = Path("docs/reqs") / req_id
 print(f"[fake {tool}] {stage} {req_id}")
-time.sleep(1.5)  # 让并行可见
+time.sleep(float(os.environ.get("LANE_FAKE_DELAY", "1.5")))  # 让并行可见；自检里调小
 
 if "额度用完" in title and stage == "code" and not Path(".lane/limit-seen").exists():
     Path(".lane/limit-seen").write_text("x")   # 第一次模拟额度用完，之后正常
@@ -49,7 +50,8 @@ elif stage == "test":
     Path("tests/test_app.txt").write_text("用例\n", encoding="utf-8")
     (req / "test-design.md").write_text("RESULT: PASS\n\n3 个用例已就绪。\n", encoding="utf-8")
 elif stage == "itest":
-    time.sleep(2)  # 拉长一点，排队失效时两个集成运行会重叠
+    if "问候语" in title or "自测失败" in title:   # 排队检查用的两条需求：拉长一点，排队失效时两个集成运行会重叠
+        time.sleep(2)
     first = not list((req / "history").glob("*-test-report.md"))
     if "集成失败" in title and first:  # 第一次集成运行报产品缺陷，应退回修复
         (req / "test-report.md").write_text("RESULT: FAIL_PRODUCT\n\n1 个用例失败。\n", encoding="utf-8")

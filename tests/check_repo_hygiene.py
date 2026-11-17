@@ -34,8 +34,8 @@ for name in ("config/server.toml", "config/local.toml", "config/rules/x.md", "co
 for name in ("config/lane.toml", "config/server.toml.example", "config/local.toml.example", "templates/AGENTS.md"):
     assert subprocess.run(["git", "check-ignore", "-q", name], cwd=ROOT).returncode == 1, f"{name} 被误忽略了"
 
-# 3. 被提交的文件里不能有本机路径（C:/Users/<真名>/…）；占位请用 C:/Users/you、C:/Users/<名字> 或 C:/path/to
-path_pattern = re.compile(r"[A-Za-z]:[\\/]+Users[\\/]+(?!you\b|<)[^\\/\s\"']+", re.I)
+# 3. 被提交的文件里不能有本机路径（C:/Users/<真名>、/home/<真名>、/Users/<真名>）；占位请用 you、<名字> 或 C:/path/to
+path_pattern = re.compile(r"(?:[A-Za-z]:[\\/]+Users[\\/]+|(?<![\w.])/(?:home|Users)/)(?!you\b|<|\$|\{|name\b)[^\\/\s\"'`]+", re.I)
 leaks = []
 for f in tracked:
     if f == "tests/check_repo_hygiene.py":

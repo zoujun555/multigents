@@ -8,7 +8,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import jenny
+from . import jenny, notify
 from .agents import kill_tree, render_prompt, run_agent
 from .core import (AUTO_STAGES, Config, Lane, agent_paused, all_lanes, changed_files, commit_all, load_lane, now,
                    pause_agent, revert_file, usage_today)
@@ -119,6 +119,23 @@ def decide(cfg: Config, lane: Lane, stage: str) -> tuple[str, str, str]:
             return "merge_gate", "waiting", "汇总已生成，请阅读 summary.md 后确认"
         return "report", "blocked", "没有产出 summary.md"
     raise ValueError(stage)
+
+
+WAKE = threading.Event()   # 阶段结束时置位，让调度器马上开始下一个阶段，不用等满一轮轮询间隔
+
+
+def run_and_wake(cfg: Config, lane: Lane) -> None:
+    try:
+        run_stage(cfg, lane)
+    finally:
+        WAKE.set()
+
+
+def mark_running(lane: Lane) -> None:
+    """派出阶段时立刻写下新的心跳。否则 Jenny 紧接着检查，会拿上一次运行（可能是几小时前）留下的旧心跳，
+    误报"没有心跳"。"""
+    lane.data["heartbeat"] = now()
+    lane.set(status="running")
 
 
 def run_stage(cfg: Config, lane: Lane) -> None:
@@ -248,12 +265,13 @@ def scheduler(cfg_factory, once: bool = False) -> None:
             except Exception as exc:  # 配置正在被保存，或被改坏了：沿用上一份，不让调度器退出
                 print(f"[{now()[11:]}] 配置读取失败，沿用上一份：{exc}")
             for lane_id in [k for k, v in threads.items() if not v[0].is_alive()]:
-                del threads[lane_id]
+                finished_stage = threads.pop(lane_id)[2]
                 try:
                     lane = load_lane(cfg, lane_id)
                 except SystemExit:   # 阶段刚结束就被人批准并清理了：只是少打一行，不能让调度器退出
                     continue
                 print(f"[{now()[11:]}] {lane_id} → {lane.data['stage']} / {lane.data['status']}  {lane.data.get('note', '')}")
+                notify.on_stage_end(cfg, lane, finished_stage)
 
             used = usage_today(cfg)
             waiting_budget = []
@@ -269,14 +287,16 @@ def scheduler(cfg_factory, once: bool = False) -> None:
                 # 阶段自己的并发上限：测试阶段设为 1，集成测试（共享数据库、CoverageHub）就会排队
                 if sum(1 for v in threads.values() if v[2] == stage) >= cfg.stage(stage).get("max_parallel", 99):
                     continue
-                if agent_paused(cfg, agent) or used.get(agent, 0) >= cfg.data.get("budget", {}).get(agent, 10 ** 9):
+                if agent_paused(cfg, agent):
+                    continue   # 暂停是暂时的：需求留在队列里，不算"额度用完"，也不能让 --once 提前退出
+                if used.get(agent, 0) >= cfg.data.get("budget", {}).get(agent, 10 ** 9):
                     waiting_budget.append(lane.id)
                     continue
                 print(f"[{now()[11:]}] {lane.id} 开始 {lane.data['stage']}（{agent}）")
-                t = threading.Thread(target=run_stage, args=(cfg, lane), daemon=True)
+                t = threading.Thread(target=run_and_wake, args=(cfg, lane), daemon=True)
                 threads[lane.id] = (t, agent, stage)
                 used[agent] = used.get(agent, 0) + 1
-                lane.set(status="running")
+                mark_running(lane)
                 t.start()
 
             for alert in jenny.tick(cfg, waiting_budget):
@@ -286,7 +306,9 @@ def scheduler(cfg_factory, once: bool = False) -> None:
                 if not any(l.data["status"] == "queued" and l.data["stage"] in AUTO_STAGES and l.id not in waiting_budget
                            for l in all_lanes(cfg)):
                     break
-            time.sleep(1 if once else cfg.get("workbench", "poll_seconds", 15))
+            if WAKE.wait(0.2 if once else cfg.get("workbench", "poll_seconds", 15)):
+                WAKE.clear()
+                time.sleep(0.05)   # 让刚结束的阶段线程真正退出，下一轮才认得出它已结束
     except KeyboardInterrupt:
         print("\n正在停止……")
         for lane_id in threads:

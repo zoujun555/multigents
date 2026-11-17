@@ -175,14 +175,16 @@ def run_agent(cfg: Config, lane: Lane, stage: str, stage_cfg: dict, prompt_text:
                                 stdin=subprocess.DEVNULL, creationflags=flags,
                                 start_new_session=(os.name != "nt"))
         lane.data["pid"] = proc.pid
-        start = time.time()
+        start, last_beat = time.time(), 0.0
         while proc.poll() is None:
-            lane.data["heartbeat"] = now()
-            lane.save()
+            if time.time() - last_beat >= 3:   # 心跳每 3 秒写一次；进程每 0.2 秒看一次，阶段结束能马上发现
+                lane.data["heartbeat"] = now()
+                lane.save()
+                last_beat = time.time()
             if time.time() - start > timeout:
                 kill_tree(proc.pid)
                 proc.wait()
                 return "timeout", log_path
-            time.sleep(3)
+            time.sleep(0.2)
     lane.data["pid"] = None
     return ("ok" if proc.returncode == 0 else "error"), log_path

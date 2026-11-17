@@ -1,0 +1,58 @@
+# 在 Linux 和 Windows 上各跑一遍全部自检。全程用假 Agent，不消耗任何额度。
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  checks:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 给自检用的 claude 和 agy 替身（命令行检查只看它们在不在 PATH 上）
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          for name in claude agy; do
+            if [ "$RUNNER_OS" = "Windows" ]; then
+              printf '@exit /b 0\r\n' > "$RUNNER_TEMP/bin/$name.cmd"
+            else
+              printf '#!/bin/sh\nexit 0\n' > "$RUNNER_TEMP/bin/$name"
+              chmod +x "$RUNNER_TEMP/bin/$name"
+            fi
+          done
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: git 身份（自检会在临时仓库里提交）
+        run: |
+          git config --global user.name ci
+          git config --global user.email ci@example.invalid
+
+      - name: 单元测试
+        run: python tests/unit_tests.py
+
+      - name: 仓库检查（不该提交的文件、本机路径、模板）
+        run: python tests/check_repo_hygiene.py
+
+      - name: 命令行检查
+        run: python tests/check_agent_commands.py
+
+      - name: 网页和接口检查
+        run: python tests/run_ui_check.py
+
+      - name: 完整流水线检查
+        run: python tests/run_demo.py

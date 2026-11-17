@@ -64,7 +64,7 @@ state/alerts.jsonl 告警历史（自动生成，所有项目一份，每条带�
 .\lane.cmd new hronetime "加班申请增加附件" -m "需求描述……"   # 或 -f 需求.md
 .\lane.cmd run                 # 开一个终端一直挂着：调度 + Jenny
 .\lane.cmd status              # 在终端里看全部需求和当前告警（网页看板上是同样的内容）
-.\lane.cmd approve REQ-001     # 批准规格 / 确认汇总
+.\lane.cmd approve REQ-001     # 批准规格 / 确认汇总（批准规格时可以加 -m "补充意见"）
 .\lane.cmd reject REQ-001 -m "意见"   # 退回规格重写 / 退回去修复
 .\lane.cmd resume REQ-001 --stage code   # 卡住的需求处理完后继续
 .\lane.cmd log REQ-001         # 经过和最近的日志
@@ -87,7 +87,7 @@ state/alerts.jsonl 告警历史（自动生成，所有项目一份，每条带�
 | 页面 | 内容 | 能做的事 |
 |---|---|---|
 | 看板 | 每条需求所处的阶段、需要你处理的事项、当前告警、告警历史（可按项目筛选）、今日用量和预算、调度器状态 | 启动和停止调度器、新建需求 |
-| 需求 | 各阶段产出的文件（规格、评审、测试报告、汇总等）、经过和耗时、最近的日志 | 批准、带意见退回、从指定阶段继续、清理或放弃 |
+| 需求 | 各阶段产出的文件（规格、评审、测试报告、汇总等）、经过和耗时、最近的日志 | 批准（批准规格时可附带意见）、编辑规格（等待批准时）、带意见退回、从指定阶段继续、清理或放弃 |
 | 统计 | 各阶段运行次数和耗时、评审一次通过率、平均修复轮次、卡住的原因、每天各工具的会话数 | 按项目和创建日期筛选 |
 | 配置 | `lane.toml`、`local.toml`、各项目的规则文件、规则模板 | 文本编辑并保存；新建项目规则 |
 
@@ -96,6 +96,79 @@ state/alerts.jsonl 告警历史（自动生成，所有项目一份，每条带�
 - **远程访问**：默认监听 `0.0.0.0`，其他机器用 `http://<这台机器>:8770/` 打开；连不上时在 Windows 防火墙放行 8770 端口。只想本机使用，把 `server.toml` 里的 `host` 改成 `127.0.0.1`。同一地址连续输错 5 次密码会被锁定 5 分钟。
 - **安全**：这是明文 HTTP，登录后能启动 Agent、能修改它们可以执行的命令。只在可信的网络里开放；要经公网访问，放在 HTTPS 反向代理后面。
 - 在网页上启动的调度器在后台运行，输出写到 `state/scheduler.log`。同一时间只能有一个调度器，命令行的 `lane run` 和网页上的"启动"互斥。
+
+## 在 Linux / macOS 上运行
+
+代码在 Linux 上走进程组（`os.killpg`）来启动和结束 Agent，Windows 上走 `taskkill`，两条路径都在自检里有测试。
+
+**需要**：Python **3.11 或更新**（读配置用的 `tomllib` 从 3.11 起才在标准库里；Ubuntu 22.04 自带 3.10，需要另装；24.04 自带 3.12）、`git`、以及你用的 `claude` 和 `agy` 命令。版本太旧时，任何 `lane` 命令都会直接说明，不会报一个看不懂的导入错误。
+
+**命令**：把 `.\lane.cmd` 换成 `./lane.sh`，或者在工作台文件夹里直接 `python3 -m lane ...`：
+
+```bash
+./lane.sh doctor
+./lane.sh new myapp "标题" -m "需求描述"
+./lane.sh run                 # 调度器
+./lane.sh ui --no-browser     # 网页界面（服务器上没有浏览器，不用自动打开）
+```
+
+用别的 Python：`LANE_PYTHON=python3.12 ./lane.sh doctor`。
+
+**配置**：本机路径和项目登记仍然写在 `config/local.toml`，Linux 路径区分大小写。`config/local.toml.example` 末尾有一个 Linux 上 Node 项目的完整例子，包括工作空间、`allow_commands` 和通知。
+
+**网页界面**：浏览器打开 `http://<这台机器>:8770/`。连不上时开放端口：
+
+```bash
+sudo ufw allow 8770/tcp                                   # Ubuntu
+sudo firewall-cmd --permanent --add-port=8770/tcp && sudo firewall-cmd --reload   # RHEL / Fedora
+```
+
+只想本机访问，把 `config/server.toml` 里的 `host` 改成 `127.0.0.1`，再用 `ssh -L 8770:127.0.0.1:8770 服务器` 转发。
+
+**通知**：服务器没有桌面时，`notify_command` 可以换成任何读取环境变量 `LANE_MESSAGE` 的命令（发邮件、调 webhook）。有桌面时：`["sh", "-c", "notify-send lane \"$LANE_MESSAGE\""]`。环境变量放在 `sh -c` 的双引号里，消息里有引号也安全。
+
+**一直运行（systemd 用户服务）**：让调度器和网页界面在你退出登录后继续运行，也能在重启后自动起来。下面的路径换成你的：
+
+```ini
+# ~/.config/systemd/user/lane-scheduler.service
+[Unit]
+Description=lane scheduler
+
+[Service]
+WorkingDirectory=%h/multigents
+ExecStart=/usr/bin/python3 -u -m lane run
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+```
+
+```ini
+# ~/.config/systemd/user/lane-ui.service
+[Unit]
+Description=lane web page
+
+[Service]
+WorkingDirectory=%h/multigents
+ExecStart=/usr/bin/python3 -u -m lane ui --no-browser
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now lane-scheduler lane-ui
+loginctl enable-linger "$USER"      # 退出登录后继续运行
+journalctl --user -u lane-scheduler -f
+```
+
+两点注意：用 systemd 运行调度器时，**不要点网页上的"停止"**，它会强行结束进程，systemd 又会把它重启；要停就用 `systemctl --user stop lane-scheduler`。网页上的"启动"在调度器已经在运行时会提示"已经在运行"。
+
+**验证情况**：这些 Linux 部分是按代码和文档写的。仓库里的 GitHub Actions 工作流（`.github/workflows/tests.yml`）会在 `ubuntu-latest` 和 `windows-latest` 上各跑一遍全部自检，推送之后才会运行。在你自己的 Linux 机器上，先跑 `python3 tests/unit_tests.py`，它会检查进程的启动和结束。
 
 ## 每个项目怎么构建和验证
 
@@ -190,6 +263,38 @@ allow_commands = [
 | [github/spec-kit](https://github.com/github/spec-kit) | 规格的章节结构 | 可以叠加使用：想要更细的规格流程时，在目标仓库里装它，让规划阶段产出它的格式。它的 README 没提 agy，是否支持要查它的 integrations 文档 |
 | [kdlbs/kandev](https://github.com/kdlbs/kandev) | 没有借用 | 功能最接近（每步换工具的流水线，原生支持 Windows，agy 通过 ACP 接入），但它是带界面的整套系统，AGPL 许可证，agy 的 ACP 服务要手动安装。以后想要看板界面时值得试 |
 | [BloopAI/vibe-kanban](https://github.com/BloopAI/vibe-kanban) | 没有借用 | README 开头写明项目正在停止维护 |
+
+## 自检：改完什么跑哪个
+
+| 命令 | 用时 | 检查什么 |
+|---|---|---|
+| `python tests/unit_tests.py` | 约 7 秒 | 直接调用函数：各阶段之后的去向、告警和通知规则、登录、批准/退回/编辑/继续的规则、配置校验。不启动调度器，也不用假 Agent |
+| `python tests/check_repo_hygiene.py` | 约 2 秒 | 不该提交的文件没有被跟踪、提交的文件里没有本机路径、两个模板有效 |
+| `python tests/run_ui_check.py` | 约 40 秒 | 网页和接口：登录、所有操作、统计、配置、调度器日志 |
+| `python tests/run_demo.py` | 约 40 秒 | 完整流水线（假 Agent）：并行、排队、退回、超时、额度、通知 |
+
+改提示词、文档、配置文字：只跑单元测试。改网页或接口：再加网页检查。改调度器或阶段逻辑：再加完整流水线。做完一批工作：全部跑一遍。
+
+## 怎么知道需求有进展
+
+- **网页标签页的标题**会带上需要你处理的数量，比如 `(2) 多 Agent 工作台`。每 8 秒更新一次，标签页在后台也会更新。
+- **桌面通知**：在 `config/local.toml` 的 `[jenny]` 里设 `notify_command`（命令是本机的，所以不放在 lane.toml 里）。消息放在环境变量 `LANE_MESSAGE` 里，PowerShell 里用 `$env:LANE_MESSAGE`；**不要把 `{message}` 写进 shell 字符串**，它不会被转义。`config/lane.toml` 里有说明；一个 Windows 气泡提示的例子在你的 local.toml 里。
+- 什么时候通知：有新告警（卡住、没有心跳、额度用完……）；需求到了"等待批准规格"或"等待确认合并"（`notify_gates`，默认开）；每个阶段完成（`notify_stage_done`，默认关，比较吵）。
+- **调度器日志** `state/scheduler.log` 现在每一行立刻写入（之前被缓冲，文件长时间是空的）。从网页启动的调度器需要重启一次才生效。
+- 通知消息默认是英文。
+
+## 审规格时怎么给反馈
+
+停在"等待批准规格"时有三种办法，按改动从小到大：
+
+| 办法 | 用在哪里 | 之后发生什么 |
+|---|---|---|
+| **编辑规格**（规格标签页的"编辑规格"） | 只想改一个措辞、一个细节 | 直接改 `spec.md`，上一版留在 `history/NN-spec.md`，批准时一并提交。不用再跑一轮规划 |
+| **批准时附带意见**（批准按钮上方的输入框；命令行 `lane approve REQ-001 -m "意见"`） | 规格可以，但开发时要注意某些事 | 意见写进 `feedback.md`，小标题是"批准规格时附带的意见"。编码、修复阶段照做，评审阶段检查它有没有被照做 |
+| **退回并写意见** | 规格方向不对，需要重写 | 意见写进 `feedback.md`，需求回到规划阶段，规划者按意见重写（多一轮，约 2 分钟） |
+
+- 批准后规格不能再改（想改要先让它退回）。批准时的意见只在批准规格时可以附带，确认合并时没有这个框。
+- 编辑和意见都记在需求的"经过"里（"已编辑""已批准"）。
 
 ## 工作空间：工作树放在哪里
 

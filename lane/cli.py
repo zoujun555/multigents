@@ -25,7 +25,7 @@ def cmd_status(cfg: Config, args) -> None:
 
 
 def cmd_approve(cfg: Config, args) -> None:
-    print(ops.approve(cfg, args.id))
+    print(ops.approve(cfg, args.id, args.message or ""))
 
 
 def cmd_reject(cfg: Config, args) -> None:
@@ -143,6 +143,7 @@ def main(argv: list[str] | None = None) -> None:
 
     s = sub.add_parser("approve", help="批准规格，或确认汇总")
     s.add_argument("id")
+    s.add_argument("-m", "--message", help="批准规格时附带的意见，编码阶段会读到")
     s.set_defaults(fn=cmd_approve)
 
     s = sub.add_parser("reject", help="退回规格，或退回去修复")

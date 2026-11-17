@@ -41,12 +41,12 @@ def start_scheduler(cfg: Config) -> str:
     with _start_lock:
         if scheduler_state(cfg)["running"]:
             raise SystemExit("调度器已经在运行")
-        env = {**os.environ, "LANE_HOME": str(cfg.home), "PYTHONIOENCODING": "utf-8",
+        env = {**os.environ, "LANE_HOME": str(cfg.home), "PYTHONIOENCODING": "utf-8", "PYTHONUNBUFFERED": "1",
                "PYTHONPATH": str(Path(__file__).resolve().parents[2])}
         log_path = cfg.state_dir / "scheduler.log"
         flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
         with open(log_path, "ab") as log:
-            proc = subprocess.Popen([sys.executable, "-m", "lane", "run"], cwd=cfg.home, env=env, stdout=log,
+            proc = subprocess.Popen([sys.executable, "-u", "-m", "lane", "run"], cwd=cfg.home, env=env, stdout=log,
                                     stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, creationflags=flags,
                                     start_new_session=(os.name != "nt"))
         for _ in range(50):   # 等它写下锁文件再返回，最多 10 秒

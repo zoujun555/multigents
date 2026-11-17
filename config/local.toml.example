@@ -61,3 +61,29 @@ port_base = 64000
 
 [projects.hronetime.verify.env]
 TEST_BASE_URL = "http://localhost:{port}"
+
+# ---- 一个 Linux 上的 Node 项目的例子（取消注释并改成自己的路径）-----------
+# [workbench]
+# worktree_root = "/home/you/lane-ws"          # 各需求的工作树放这里；Linux 上路径区分大小写
+#
+# [jenny]
+# # 桌面通知：消息在环境变量里，放在 sh -c 的双引号里是安全的。没有桌面的服务器可以换成任何读 $LANE_MESSAGE 的命令。
+# notify_command = ["sh", "-c", "notify-send lane \"$LANE_MESSAGE\""]
+#
+# [projects.myapp]
+# repo = "/home/you/projects/myapp"
+# base = "main"
+# test_paths = ["test/", "e2e/"]
+# allow_commands = ['npm (ci|test|run build)', 'npx playwright test.*', 'kill .*']
+#
+# [projects.myapp.verify]
+# setup_cmd = "npm ci"
+# build_cmd = "npm run build"
+# unit_cmd = "npm test"
+# serve_cmd = "npm start -- --port {port}"
+# ready_url = "http://localhost:{port}/health"
+# ta_cmd = "npx playwright test"
+# port_base = 64000
+#
+# [projects.myapp.verify.env]
+# BASE_URL = "http://localhost:{port}"

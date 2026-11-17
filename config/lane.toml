@@ -26,9 +26,14 @@ gate_reminder_hours = 4   # 等人确认超过多久提醒一次
 budget_warn_ratio = 0.8
 diagnose = true           # 需求卡住时是否让 Claude 读日志写一份 diagnosis.md
 diagnose_model = "haiku"
-# 有新告警时执行的命令（可选），{message} 会被替换。例：
-# notify_command = ["powershell", "-NoProfile", "-Command", "msg * '{message}'"]
+# 需要你注意时执行的命令（可选；不设就不通知）。消息放在环境变量 LANE_MESSAGE 里，
+# 在 PowerShell 里用 $env:LANE_MESSAGE。不要把 {message} 写进 shell 字符串：它不会被转义。
+# 通知的情况：有新告警（卡住、没有心跳、额度用完……）；需求到了闸门等你批准（notify_gates）；
+# 每个阶段完成（notify_stage_done，默认关闭）。网页标签页标题也会显示需要你处理的数量。
+# 在 config/local.toml 里设置：这条命令是本机的。
 notify_command = []
+notify_gates = true        # 需求到了"等待批准规格"或"等待确认合并"时通知
+notify_stage_done = false  # 每个阶段完成都通知（比较吵）
 
 # ---- 工具适配器 --------------------------------------------------------
 # command 里的占位符：{prompt} {model} {mode} {effort}（取自 [agents.xxx] 的 effort）{timeout}（秒）{worktree}

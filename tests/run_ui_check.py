@@ -18,6 +18,8 @@ from pathlib import Path
 
 sys.stdout.reconfigure(encoding="utf-8")
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+from lane.agents import kill_tree  # noqa: E402
 tmp = Path(tempfile.mkdtemp(prefix="lane-ui-"))
 home, repo = tmp / "home", tmp / "repo"
 shutil.copytree(ROOT / "prompts", home / "prompts")
@@ -130,6 +132,8 @@ try:
     assert call("/api/scheduler/start", {})[0] == 200
     assert call("/api/scheduler/start", {})[0] == 400, "重复启动应报错"
     wait_for(lambda: call("/api/lane?id=REQ-001")[1].get("stage") == "spec_gate", "REQ-001 到达规格闸门")
+    log_text = (home / "state" / "scheduler.log").read_text(encoding="utf-8")
+    assert "REQ-001" in log_text and "plan" in log_text, f"调度器日志要立刻写进文件，不能被缓冲：{log_text!r}"
     assert call("/api/board")[1]["scheduler"]["running"] is True
 
     # 需求页、文件、越界读取
@@ -142,10 +146,31 @@ try:
 
     # 退回必须写意见；批准后一路跑到合并闸门
     assert call("/api/lane/reject", {"id": "REQ-001", "message": "  "})[0] == 400
-    assert call("/api/lane/approve", {"id": "REQ-001"})[0] == 200
+
+    # 编辑规格：保存后上一版进 history/，空的和过大的被拒绝；批准后不能再改
+    original = call("/api/file?id=REQ-001&name=spec.md")[1]["text"]
+    assert call("/api/lane/spec", {"id": "REQ-001", "text": "  \n"})[0] == 400, "空规格不能保存"
+    assert call("/api/lane/spec", {"id": "REQ-001", "text": "x" * (200 * 1024 + 1)})[0] == 400, "过大的规格不能保存"
+    assert call("/api/lane/spec", {"id": "REQ-001", "text": original})[1]["message"] == "规格没有变化"
+    assert "history/01-spec.md" not in call("/api/lane?id=REQ-001")[1]["files"], "没改动就不该产生历史版本"
+    edited = "STATUS: READY\n\n# 改过的规格\n\nAC1：改过。\n"
+    assert call("/api/lane/spec", {"id": "REQ-001", "text": edited})[0] == 200
+    assert call("/api/file?id=REQ-001&name=spec.md")[1]["text"] == edited
+    assert call("/api/file?id=REQ-001&name=history/01-spec.md")[1]["text"] == original, "上一版应留在 history/"
+    assert call("/api/lane?id=REQ-001")[1]["history"][-1]["result"] == "edited"
+    assert call("/api/lane/spec", {"id": "REQ-999", "text": "x"})[0] == 400
+
+    # 带意见批准：意见写进 feedback.md（带固定小标题），编码阶段的提示词会去读它
+    assert call("/api/lane/approve", {"id": "REQ-001", "notes": "注意：只改首页，别动登录页。"})[0] == 200
+    feedback = call("/api/file?id=REQ-001&name=feedback.md")[1]["text"]
+    assert "批准规格时附带的意见" in feedback and "只改首页，别动登录页" in feedback, feedback
     assert call("/api/lane/approve", {"id": "REQ-001"})[0] == 400, "已不在闸门，再次批准应报错"
+    assert call("/api/lane/spec", {"id": "REQ-001", "text": edited + "再改"})[0] == 400, "批准之后不能再编辑规格"
     wait_for(lambda: call("/api/lane?id=REQ-001")[1].get("stage") == "merge_gate", "REQ-001 到达合并闸门", 120)
+    prompt = (home / "worktrees" / "demo" / "REQ-001" / ".lane" / "prompt-code.md").read_text(encoding="utf-8")
+    assert "feedback.md" in prompt and "批准规格时附带的意见" in prompt, "编码提示词应让 Agent 读批准时的意见"
     assert call("/api/lane/clean", {"id": "REQ-001"})[0] == 400, "未完成的需求不加 force 不能清理"
+    assert call("/api/lane/approve", {"id": "REQ-001", "notes": "合并时不能附带意见"})[0] == 400
     assert call("/api/lane/approve", {"id": "REQ-001"})[0] == 200
 
     # 告警历史：没有告警时为空，项目筛选不报错
@@ -208,6 +233,6 @@ finally:
     server.kill()
     lock = home / "state" / "scheduler.lock"
     if lock.exists():
-        subprocess.run(["taskkill", "/F", "/T", "/PID", lock.read_text()], capture_output=True)
+        kill_tree(int(lock.read_text()))   # 工作台自己的函数：Windows 用 taskkill，Linux 用进程组
     time.sleep(0.5)
     shutil.rmtree(tmp, ignore_errors=True)

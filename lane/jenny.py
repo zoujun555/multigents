@@ -7,8 +7,8 @@
 from __future__ import annotations
 
 import json
-import subprocess
 
+from . import notify
 from .core import STAGE_LABEL, STATUS_LABEL, Config, Lane, age_minutes, all_lanes, now, usage_today
 
 
@@ -127,10 +127,6 @@ def tick(cfg: Config, waiting_budget: list[str] | None = None) -> list[str]:
         with open(cfg.state_dir / "alerts.jsonl", "a", encoding="utf-8") as f:
             for a in fresh:
                 f.write(json.dumps({"at": now(), **a}, ensure_ascii=False) + "\n")
-        notify = cfg.get("jenny", "notify_command", [])
-        for a in fresh if notify else []:
-            try:
-                subprocess.run([x.replace("{message}", a["text"]) for x in notify], timeout=30, capture_output=True)
-            except Exception:
-                pass  # 通知失败不影响调度
+        for a in fresh:
+            notify.send(cfg, a["text"])
     return [a["text"] for a in fresh]

@@ -39,8 +39,14 @@ config = config.replace('command = ["agy", "-p", "{prompt}", "--model", "{model}
                         f"command = {json.dumps(fake + ['agy', '{prompt}', '{settings}'])}")
 assert "fake_agent" in config
 config = config.replace("limit_pause_minutes = 30", "limit_pause_minutes = 0.05")  # 额度暂停 3 秒
+assert "claude = 40" in config and "agy = 60" in config   # 演示跑的假 Agent 很多，用真实的每日额度会撞上上限
+config = config.replace("claude = 40", "claude = 100000").replace("agy = 60", "agy = 100000")
+assert "notify_command = []" in config
+config = config.replace("notify_command = []", f"notify_command = {json.dumps([sys.executable, str(ROOT / 'tests' / 'notify_probe.py')])}")
 assert "0.05" in config
-config = config.replace("timeout_min = 90", "timeout_min = -0.9")  # 编码阶段约 6 秒后超时
+assert config.count("max_parallel = 2") == 3   # 工作台总并发 + 两个工具各一个
+config = config.replace("max_parallel = 2", "max_parallel = 8")   # 七个需求尽量同时跑；集成测试阶段的 max_parallel = 1 不动，仍要排队
+config = config.replace("timeout_min = 90", "timeout_min = -0.9", 1)  # 只改编码阶段（第一处），约 6 秒后超时；测试阶段不设短超时，避免并发变多后被误杀
 (home / "config" / "rules").mkdir()
 (home / "config" / "rules" / "demo.md").write_text("- 演示规则：断言必须严格匹配\n", encoding="utf-8")
 workspace = tmp / "ws"
@@ -52,7 +58,8 @@ assert "[projects." not in config, "项目登记应在 local.toml 里，不在 l
 (home / "config" / "lane.toml").write_text(config, encoding="utf-8")
 (home / "config" / "local.toml").write_text(local, encoding="utf-8")
 
-env = {**os.environ, "LANE_HOME": str(home), "PYTHONPATH": str(ROOT), "PYTHONIOENCODING": "utf-8"}
+env = {**os.environ, "LANE_HOME": str(home), "PYTHONPATH": str(ROOT), "PYTHONIOENCODING": "utf-8",
+       "LANE_NOTIFY_FILE": str(tmp / "notified.txt"), "LANE_FAKE_DELAY": "0.1"}
 
 def lane(*args, ok=True):
     r = subprocess.run([sys.executable, "-m", "lane", *args], env=env, capture_output=True, text=True, encoding="utf-8")
@@ -150,5 +157,50 @@ lane("clean", "REQ-001")
 lane("status")
 assert state(2)["stage"] == "spec_gate"
 assert not wt1.exists()
+
+# 通知：到闸门时通知一次；卡住走告警；阶段完成默认不通知；消息放在环境变量里
+notified = (tmp / "notified.txt").read_text(encoding="utf-8").splitlines()
+approvals = [n for n in notified if "waiting for your approval" in n]
+assert len([n for n in approvals if "REQ-001" in n]) == 1, notified
+assert len([n for n in approvals if "REQ-002" in n]) == 2, "被退回的需求再次到规格闸门要再通知一次"
+assert any("REQ-001" in n and "waiting for your confirmation" in n for n in notified), notified
+assert any("REQ-003" in n and "卡住" in n for n in notified), "卡住的需求要通过告警通知"
+assert not any("finished, next stage" in n for n in notified), "阶段完成的通知默认关闭"
+assert len([n for n in notified if "REQ-003" in n and "卡住" in n]) == 1, "同一次卡住只通知一次"
+
+# 回归：需求在闸门等了几个小时再派出去时，不能拿上一次运行留下的旧心跳去报"没有心跳"
+sys.path.insert(0, str(ROOT))
+from datetime import datetime, timedelta  # noqa: E402
+from lane import jenny  # noqa: E402
+from lane.core import Config, Lane  # noqa: E402
+from lane.runner import mark_running  # noqa: E402
+
+cfg = Config(home)
+old = (datetime.now() - timedelta(hours=3)).isoformat(timespec="seconds")
+probe = Lane(cfg, {"id": "REQ-900", "project": "demo", "title": "探针", "branch": "x", "worktree": str(tmp), "stage": "code",
+                   "status": "queued", "round": 0, "note": "", "created": old, "since": old, "heartbeat": old, "history": []})
+stale_before = [a for a in jenny.find_alerts(cfg, [Lane(cfg, {**probe.data, "status": "running"})], []).values() if "没有心跳" in a["text"]]
+assert stale_before, "探针本身要能触发误报，否则下面的断言没有意义"
+mark_running(probe)
+assert not [a for a in jenny.find_alerts(cfg, [probe], []).values() if "没有心跳" in a["text"]], "派出阶段时应刷新心跳"
+(home / "state" / "lanes" / "REQ-900.json").unlink()
+
+# 通知的开关：阶段完成通知打开后才有；重试（额度）不算完成；关掉闸门通知就没有
+from lane import notify  # noqa: E402
+
+(tmp / "notified.txt").write_text("", encoding="utf-8")
+os.environ["LANE_NOTIFY_FILE"] = str(tmp / "notified.txt")
+done = Lane(cfg, {**probe.data, "stage": "review", "status": "queued", "history": [{"at": old, "stage": "code", "result": "ok"}]})
+assert notify.on_stage_end(cfg, done, "code") == [], "默认不通知阶段完成"
+cfg.data.setdefault("jenny", {})["notify_stage_done"] = True
+assert notify.on_stage_end(cfg, done, "code") == ['REQ-900 "探针": code finished, next stage: review']
+retry = Lane(cfg, {**done.data, "history": [{"at": old, "stage": "code", "result": "limit"}]})
+assert notify.on_stage_end(cfg, retry, "code") == [], "额度暂停后的重试不是完成"
+gate = Lane(cfg, {**probe.data, "stage": "spec_gate", "status": "waiting"})
+assert notify.on_stage_end(cfg, gate, "plan") == ['REQ-900 "探针": spec is ready, waiting for your approval']
+cfg.data["jenny"]["notify_gates"] = False
+assert notify.on_stage_end(cfg, gate, "plan") == [], "关掉闸门通知就没有"
+text = (tmp / "notified.txt").read_text(encoding="utf-8")
+assert len(text.splitlines()) == 2, text
 shutil.rmtree(tmp, ignore_errors=True)
 print("全部通过")

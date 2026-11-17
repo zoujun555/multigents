@@ -23,7 +23,20 @@ function nav() {
       h("button", { class: "btn small", onclick: async () => { await api("/api/logout", {}); showLogin(); } }, t("logout"))));
 }
 
+// 浏览器标签页标题带上"需要你处理"的数量，比如 (2) 多 Agent 工作台，不打开页面也能看到
+let loggedIn = false;
+async function updateTitle() {
+  if (!loggedIn) return;   // 登录页上不要去请求，否则会反复触发登录页
+  try {
+    const board = await api("/api/board");
+    const needs = board.lanes.filter((l) => l.status === "waiting" || l.status === "blocked").length;
+    document.title = (needs ? `(${needs}) ` : "") + t("app.name");
+  } catch { /* 暂时连不上：保持原来的标题 */ }
+}
+setInterval(updateTitle, 8000);
+
 function showLogin() {
+  loggedIn = false;
   clearInterval(refreshTimer);
   visit += 1;
   const user = h("input", { type: "text", autocomplete: "username", required: true });
@@ -50,6 +63,8 @@ function showLogin() {
 }
 
 async function route() {
+  loggedIn = true;
+  updateTitle();
   clearInterval(refreshTimer);
   visit += 1;
   const mine = visit;

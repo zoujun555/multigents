@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 from .core import (AUTO_STAGES, STAGE_LABEL, Config, Lane, commit_all, copy_local_files, create_worktree, git,
@@ -38,21 +39,55 @@ def new(cfg: Config, project: str, title: str, text: str = "") -> str:
     return "\n".join(lines)
 
 
-def approve(cfg: Config, lane_id: str) -> str:
+APPROVAL_NOTE_TITLE = "批准规格时附带的意见"   # feedback.md 里的小标题；编码、修复、评审的提示词按它识别
+
+
+def approve(cfg: Config, lane_id: str, notes: str = "") -> str:
     lane = load_lane(cfg, lane_id)
     if lane.data["status"] != "waiting":
         raise SystemExit(f"{lane.id} 现在不在等待确认（{STAGE_LABEL[lane.data['stage']]}）")
+    if notes.strip() and lane.data["stage"] != "spec_gate":
+        raise SystemExit("只有批准规格时可以附带意见")
     if lane.data["stage"] == "spec_gate":
+        if notes.strip():
+            with open(lane.req_dir / "feedback.md", "a", encoding="utf-8") as f:
+                f.write(f"\n## {now().replace('T', ' ')}（{APPROVAL_NOTE_TITLE}）\n\n{notes.strip()}\n")
         commit_all(lane.worktree, f"{lane.id}: spec approved")  # 你可能手改过 spec.md
-        lane.event(stage="spec_gate", result="approved")
+        lane.event(stage="spec_gate", result="approved", note=notes.strip())
         lane.set(stage="code", status="queued", note="")
-        return f"{lane.id} 规格已批准，进入编码队列"
+        return f"{lane.id} 规格已批准，进入编码队列" + ("；附带的意见记在 feedback.md，编码阶段会读到" if notes.strip() else "")
     lane.event(stage="merge_gate", result="approved")
     lane.set(stage="done", status="done", note="")
     proj = cfg.project(lane.data["project"])
     return (f"{lane.id} 已确认完成。本工具不会替你合并，分支在 {lane.data['branch']}：\n"
             f"  git -C \"{proj['repo']}\" merge --no-ff {lane.data['branch']}\n"
             f"合并后清理：lane clean {lane.id}")
+
+
+MAX_SPEC_BYTES = 200 * 1024
+
+
+def edit_spec(cfg: Config, lane_id: str, text: str) -> str:
+    """等待批准规格时，人直接修改 spec.md。上一版留在 history/，批准时和其他改动一起提交。"""
+    lane = load_lane(cfg, lane_id)
+    if lane.data["status"] != "waiting" or lane.data["stage"] != "spec_gate":
+        raise SystemExit("只有等待批准规格时才能编辑规格")
+    text = text.replace("\r\n", "\n")
+    if not text.strip():
+        raise SystemExit("规格不能为空")
+    if len(text.encode("utf-8")) > MAX_SPEC_BYTES:
+        raise SystemExit("规格太大（上限 200 KB）")
+    spec = lane.req_dir / "spec.md"
+    if spec.exists() and spec.read_text(encoding="utf-8") == text:
+        return "规格没有变化"
+    history = lane.req_dir / "history"
+    history.mkdir(exist_ok=True)
+    if spec.exists():
+        shutil.copy2(spec, history / f"{len(list(history.glob('*-spec.md'))) + 1:02d}-spec.md")
+    spec.write_text(text, encoding="utf-8")
+    lane.event(stage="spec_gate", result="edited", note="手工修改了规格")
+    lane.save()
+    return "规格已保存，上一版在 history/ 里。批准时会一并提交。"
 
 
 def reject(cfg: Config, lane_id: str, message: str) -> str:
