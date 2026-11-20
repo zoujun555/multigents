@@ -191,7 +191,7 @@ try:
     assert st["total"] == 1 and st["by_status"] == {"done": 1} and st["reviewed"] == 1 and st["review_first_pass"] == 0
     assert {s["stage"]: s["runs"] for s in st["stages"]} == \
         {"plan": 1, "code": 1, "review": 2, "fix": 1, "test": 1, "itest": 1, "report": 1}
-    assert st["usage_days"] and st["usage_days"][-1]["claude"] == 4 and st["usage_days"][-1]["agy"] == 4
+    assert st["usage_days"] and st["usage_days"][-1]["claude"] == 3 and st["usage_days"][-1]["agy"] == 5
     assert call("/api/stats?project=other")[1]["total"] == 0
 
     # 清理后仍能在需求页看到（已归档）

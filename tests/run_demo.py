@@ -33,7 +33,7 @@ sh("git", "commit", "-m", "init")
 
 fake = [sys.executable, str(ROOT / "tests" / "fake_agent.py")]
 config = (ROOT / "config" / "lane.toml").read_text(encoding="utf-8")
-config = config.replace('command = ["claude", "-p", "{prompt}", "--model", "{model}", "--permission-mode", "{mode}", "--effort", "{effort}", "--output-format", "text"]',
+config = config.replace('command = ["claude", "-p", "{prompt}", "--model", "{model}", "--permission-mode", "{mode}", "--effort", "{effort}", "--max-turns", "{max_turns}", "--output-format", "json"]',
                         f"command = {json.dumps(fake + ['claude', '{prompt}'])}")
 config = config.replace('command = ["agy", "-p", "{prompt}", "--model", "{model}", "--mode", "{mode}", "--print-timeout", "{timeout}s", "--output-format", "json", "--settings", "{settings}"]',
                         f"command = {json.dumps(fake + ['agy', '{prompt}', '{settings}'])}")

@@ -5,6 +5,16 @@
 # 工作空间：所有需求的工作树放在哪里（默认是工作台文件夹下的 worktrees/）。取消注释并改成自己的路径：
 # [workbench]
 # worktree_root = "D:/lane-ws"
+# profile = "claudeplus"                    # 可选：claudeplus | agy-only（可用 `lane profile <名称>` 切换）
+#
+# 需要按阶段自定义模型或推理深度时，直接覆写对应 [stages.<阶段>]（优先级高于 profile）：
+# [stages.plan_review]
+# agent = "agy"
+# model = "gemini-4-argon-high"
+# [stages.review]
+# agent = "claude"
+# model = "sonnet"
+# effort = "medium"
 #
 # 每个要管理的仓库登记一次。各项含义见文件末尾的完整例子。
 #
@@ -53,6 +63,11 @@ allow_commands = [
 setup_cmd = 'nuget\NuGet.exe restore HROneTime_v01.sln'
 build_cmd = '& "C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe" HROneTime_v01.sln /t:Build /p:Configuration=Debug'
 unit_cmd = '.\HROneTime.Tests\bin\Debug\HROneTime.Tests.exe'
+# 可选 0-Token 预检插槽（lane driver preflight 使用）：
+# lint_cmds = ['ruff check {changed_files}', 'gitleaks detect --no-git --source "{worktree}"']
+# require_utf8_bom = true         # 检查改动过的 .cs/.cshtml/.js 必须是单个 UTF-8 BOM
+# max_new_file_lines = 300        # 新增非测试代码文件行数上限
+# protected_paths = ["AGENTS.md"] # 未在 spec 提及则禁止修改的文件
 serve_cmd = '& "C:\Program Files\IIS Express\iisexpress.exe" /path:"{worktree}\Web" /port:{port}'
 ready_url = "http://localhost:{port}/"
 # 试点阶段只跑 FP11（密码找回与重置）；要跑全量时去掉 --filter

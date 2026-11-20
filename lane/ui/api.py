@@ -11,12 +11,12 @@ import time
 import tomllib
 from pathlib import Path
 
-from .. import jenny
+from .. import driver, jenny, ops
 from ..agents import kill_tree
 from ..core import AUTO_STAGES, GATES, Config, Lane, all_lanes, usage_today
 from ..runner import pid_alive
 
-ARTIFACTS = ("request.md", "spec.md", "selftest.md", "review.md", "test-design.md", "test-report.md",
+ARTIFACTS = ("request.md", "spec.md", "spec-review.md", "selftest.md", "review.md", "test-design.md", "test-report.md",
              "summary.md", "feedback.md", "diagnosis.md")
 STAGE_ORDER = ("plan", "spec_gate", "code", "review", "fix", "test", "itest", "report", "merge_gate", "done")
 HISTORY_FILE = re.compile(r"^history/\d\d-[a-z-]+\.md$")
@@ -70,12 +70,24 @@ def stop_scheduler(cfg: Config) -> str:
 
 # ---- 看板和需求 --------------------------------------------------------
 
+def create_lane(cfg: Config, project: str, title: str, text: str = "", mode: str = "scheduler") -> dict:
+    """网页新建需求：支持旧调度器队列（缺省兼容）与 AGY 驱动（standard / light）。"""
+    kind = (mode or "scheduler").strip()
+    if kind == "scheduler":
+        return {"ok": True, "message": ops.new(cfg, project, title, text)}
+    if kind in ("agy-standard", "agy-light"):
+        tier = kind.split("-", 1)[1]
+        info = driver.init_lane(cfg, project, title, text, tier=tier)
+        return {"ok": True, "message": f"已创建 {info['id']}（AGY {tier}），工作树：{info['worktree']}", **info}
+    raise SystemExit(f"未知创建模式 '{kind}'，可选：scheduler / agy-standard / agy-light")
+
+
 def lane_summary(lane: Lane) -> dict:
     d = lane.data
     return {k: d.get(k) for k in ("id", "project", "title", "stage", "status", "round", "note", "since", "created", "branch")}
 
 
-def board(cfg: Config) -> dict:
+def board(cfg: Config, readonly: bool = False) -> dict:
     lanes = all_lanes(cfg)
     return {
         "lanes": [lane_summary(l) for l in lanes],
@@ -88,6 +100,8 @@ def board(cfg: Config) -> dict:
         "stages": STAGE_ORDER,
         "auto_stages": AUTO_STAGES,
         "gates": GATES,
+        "readonly": readonly,
+        "profile": cfg.get("workbench", "profile", ""),
     }
 
 
@@ -102,7 +116,7 @@ def find_lane(cfg: Config, lane_id: str) -> tuple[Lane, bool]:
     raise SystemExit(f"没有需求 {lane_id}")
 
 
-def lane_detail(cfg: Config, lane_id: str) -> dict:
+def lane_detail(cfg: Config, lane_id: str, readonly: bool = False) -> dict:
     lane, archived = find_lane(cfg, lane_id)
     files = [n for n in ARTIFACTS if (lane.req_dir / n).exists()]
     history_dir = lane.req_dir / "history"
@@ -111,7 +125,7 @@ def lane_detail(cfg: Config, lane_id: str) -> dict:
     logs = sorted((cfg.logs_dir / lane.id).glob("*.log"))
     tail = logs[-1].read_text(encoding="utf-8", errors="replace").splitlines()[-200:] if logs else []
     return {**lane.data, "archived": archived, "files": files, "auto_stages": AUTO_STAGES,
-            "log_name": logs[-1].name if logs else "", "log_tail": "\n".join(tail)}
+            "log_name": logs[-1].name if logs else "", "log_tail": "\n".join(tail), "readonly": readonly}
 
 
 def lane_file(cfg: Config, lane_id: str, name: str) -> str:

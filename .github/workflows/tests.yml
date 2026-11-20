@@ -45,6 +45,9 @@ jobs:
       - name: 单元测试
         run: python tests/ci_run.py tests/unit_tests.py
 
+      - name: B+ 驱动与预检门禁测试
+        run: python tests/ci_run.py tests/test_bplus_driver.py
+
       - name: 仓库检查（不该提交的文件、本机路径、模板）
         run: python tests/ci_run.py tests/check_repo_hygiene.py
 

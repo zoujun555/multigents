@@ -24,6 +24,22 @@ function stageTable(data) {
     }))));
 }
 
+function tokenTable(data) {
+  const rows = data.tokens || [];
+  if (!rows.length) return h("p", { class: "muted" }, t("stats.no_tokens"));
+  return h("div", { class: "table-wrap" }, h("table", {},
+    h("thead", {}, h("tr", {}, ["stats.col_agent", "stats.col_runs", "stats.col_input", "stats.col_cache_write",
+      "stats.col_cache_read", "stats.col_output", "stats.col_cost"].map((k) => h("th", { class: k === "stats.col_agent" ? "" : "num" }, t(k))))),
+    h("tbody", {}, rows.map((r) => h("tr", {},
+      h("td", { class: "nowrap" }, r.agent),
+      h("td", { class: "num" }, r.runs),
+      h("td", { class: "num" }, r.input_tokens.toLocaleString()),
+      h("td", { class: "num" }, r.cache_creation_tokens.toLocaleString()),
+      h("td", { class: "num" }, r.cache_read_tokens.toLocaleString()),
+      h("td", { class: "num" }, r.output_tokens.toLocaleString()),
+      h("td", { class: "num" }, r.cost_usd ? r.cost_usd.toFixed(4) : "—"))))));
+}
+
 function usageTable(data) {
   if (!data.usage_days.length) return h("p", { class: "muted" }, t("stats.no_usage"));
   return h("div", { class: "table-wrap" }, h("table", {},
@@ -59,6 +75,7 @@ export async function renderStats(root, isCurrent) {
           ? h("ul", {}, data.blocked_notes.map((b) => h("li", {}, h("span", { class: "count" }, b.count), " ", b.note || t("stats.no_note"))))
           : h("p", { class: "muted" }, t("stats.no_blocked"))),
       h("section", { class: "panel" }, h("h2", {}, t("stats.usage")), usageTable(data)),
+      h("section", { class: "panel" }, h("h2", {}, t("stats.tokens")), tokenTable(data)),
       data.total < 5 ? h("p", { class: "hint" }, t("stats.thin")) : null);
   };
   [project, from, to].forEach((el) => el.addEventListener("change", load));
@@ -74,14 +91,16 @@ export async function renderStats(root, isCurrent) {
 }
 
 export async function renderConfig(root, isCurrent) {
-  let files;
-  try { files = (await api("/api/config")).files; } catch (err) { toast(err.message, true); return null; }
+  let res;
+  try { res = await api("/api/config"); } catch (err) { toast(err.message, true); return null; }
+  const files = res.files;
+  const readonly = Boolean(res.readonly);
   if (!isCurrent()) return null;
-  const editor = h("textarea", { class: "editor", spellcheck: "false", wrap: "off" });
+  const editor = h("textarea", { class: "editor", spellcheck: "false", wrap: "off", readonly: readonly });
   const picker = h("select", {}, files.map((f) => h("option", { value: f }, f)));
   const status = h("span", { class: "muted small" });
   let loaded = "";
-  const dirty = () => editor.value !== loaded;
+  const dirty = () => !readonly && editor.value !== loaded;
   const open = async (key) => {
     try {
       loaded = (await api(`/api/config/file?key=${encodeURIComponent(key)}`)).text;
@@ -96,13 +115,13 @@ export async function renderConfig(root, isCurrent) {
     open(current);
   });
   editor.addEventListener("input", () => { status.textContent = dirty() ? t("config.unsaved") : ""; });
-  const save = h("button", {
+  const save = readonly ? null : h("button", {
     class: "btn primary",
     onclick: async () => {
       if (await act("/api/config/file", { key: current, text: editor.value })) { loaded = editor.value; status.textContent = ""; }
     },
   }, t("config.save"));
-  const newRules = h("button", {
+  const newRules = readonly ? null : h("button", {
     class: "btn",
     onclick: () => {
       const name = prompt(t("config.new_rules_prompt"));
@@ -117,7 +136,7 @@ export async function renderConfig(root, isCurrent) {
   }, t("config.new_rules"));
   put(root, 
     h("div", { class: "page-head" }, h("h1", {}, t("nav.config"))),
-    h("p", { class: "muted" }, t("config.intro")),
+    h("p", { class: "muted" }, t(readonly ? "config.readonly_hint" : "config.intro")),
     h("div", { class: "row wrap" }, h("label", { class: "inline" }, t("config.file"), picker), newRules, save, status),
     editor,
     h("p", { class: "hint" }, t("config.server_note")));

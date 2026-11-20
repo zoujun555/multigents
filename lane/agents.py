@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 
 from .core import Config, Lane, add_usage, now
+from .tokens import record_from_log
 
 
 # ---- 提示词和命令 ------------------------------------------------------
@@ -17,7 +18,8 @@ from .core import Config, Lane, add_usage, now
 HEADLESS_NOTE = (
     "以下是本项目的规则，必须遵守。规则是为有人在场的对话写的；你在无头流水线里运行，所以："
     "凡是规则要求「先给思路等确认」「停下提问」或「等待确认」的地方，一律改为把问题或方案写进本阶段的结果文件并标记 BLOCKED，然后结束；"
-    "关于回复语言和排版的规则不适用于结果文件。\n\n")
+    "关于回复语言和排版的规则不适用于结果文件；"
+    "结果文件写完后，最终文本回复只需 1 句话确认路径和结论，禁止在回复中复述文件内容或做双语总结。\n\n")
 
 
 def load_rules(cfg: Config, proj: dict) -> str:
@@ -113,12 +115,17 @@ def render_prompt(cfg: Config, lane: Lane, stage: str) -> str:
 
 def build_command(cfg: Config, stage_cfg: dict, prompt_arg: str, worktree: Path, model: str | None = None,
                   settings: str = "") -> list[str]:
+    agent_cfg = cfg.agent(stage_cfg["agent"])
+    effort = stage_cfg["effort"] if "effort" in stage_cfg else agent_cfg.get("effort", "")
+    max_turns = stage_cfg.get("max_turns", agent_cfg.get("max_turns", ""))
+    mode = stage_cfg["mode"] if "mode" in stage_cfg else agent_cfg.get("default_mode", "")
     values = {
         "settings": settings,
         "prompt": prompt_arg,
         "model": stage_cfg.get("model", "") if model is None else model,
-        "mode": stage_cfg.get("mode", ""),
-        "effort": cfg.agent(stage_cfg["agent"]).get("effort", ""),
+        "mode": mode,
+        "effort": str(effort) if effort else "",
+        "max_turns": str(max_turns) if max_turns else "",
         "timeout": str(int(stage_cfg.get("timeout_min", 30) * 60)),
         "worktree": str(worktree),
     }
@@ -187,4 +194,6 @@ def run_agent(cfg: Config, lane: Lane, stage: str, stage_cfg: dict, prompt_text:
                 return "timeout", log_path
             time.sleep(0.2)
     lane.data["pid"] = None
+    used_model = stage_cfg.get("model", "") if model is None else model
+    record_from_log(cfg, lane.id, lane.data["project"], stage, stage_cfg["agent"], used_model, log_path)
     return ("ok" if proc.returncode == 0 else "error"), log_path

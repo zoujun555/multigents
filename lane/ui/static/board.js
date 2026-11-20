@@ -17,7 +17,7 @@ function usageBars(data) {
 function schedulerPanel(data, refresh) {
   const running = data.scheduler.running;
   const active = data.lanes.filter((l) => l.status === "running").length;
-  const button = h("button", {
+  const button = data.readonly ? null : h("button", {
     class: running ? "btn" : "btn primary",
     onclick: async () => {
       if (running && !confirm(t("scheduler.stop_confirm"))) return;
@@ -32,7 +32,7 @@ function schedulerPanel(data, refresh) {
       h("span", {}, running ? t("scheduler.running") : t("scheduler.stopped")),
       h("span", { class: "muted" }, t("scheduler.active", { n: active, max: data.max_parallel })),
       button),
-    !running && data.lanes.some((l) => l.status === "queued") ? h("p", { class: "hint" }, t("scheduler.queued_hint")) : null);
+    !data.readonly && !running && data.lanes.some((l) => l.status === "queued") ? h("p", { class: "hint" }, t("scheduler.queued_hint")) : null);
 }
 
 function needsYou(data) {
@@ -45,27 +45,72 @@ function needsYou(data) {
       h("div", { class: "muted small" }, t(`stage.${l.stage}`), l.note ? ` · ${l.note}` : "")))));
 }
 
+function showCreatedDialog(dialog, res) {
+  const pathInput = h("input", { type: "text", readonly: true, value: res.worktree });
+  const copy = async () => {
+    try {
+      if (navigator.clipboard) await navigator.clipboard.writeText(res.worktree);
+      else { pathInput.select(); document.execCommand("copy"); }
+    } catch { pathInput.select(); document.execCommand("copy"); }
+    toast(t("new.copied"));
+  };
+  put(dialog,
+    h("h2", {}, t("new.title")),
+    h("p", {}, t("new.agy_created", { id: res.id })),
+    h("div", { class: "row" },
+      pathInput,
+      h("button", { type: "button", class: "btn primary nowrap", onclick: copy }, t("new.copy_path"))),
+    h("p", { class: "muted small" }, `${res.branch} · ${res.launcher || ".lane/lane.cmd"}`),
+    h("div", { class: "row end" },
+      h("button", {
+        type: "button", class: "btn",
+        onclick: () => { dialog.close(); location.hash = `#/lane/${res.id}`; },
+      }, t("new.view_lane")),
+      h("button", { type: "button", class: "btn primary", onclick: () => dialog.close() }, t("close"))));
+  pathInput.focus();
+  pathInput.select();
+}
+
 function newDialog(data, refresh) {
   const dialog = h("dialog", {});
   const project = h("select", { required: true }, data.projects.map((p) => h("option", { value: p }, p)));
+  const mode = h("select", {}, [
+    ["agy-standard", "new.mode_agy_standard"],
+    ["agy-light", "new.mode_agy_light"],
+    ["scheduler", "new.mode_scheduler"],
+  ].map(([val, key]) => h("option", { value: val }, t(key))));
   const title = h("input", { type: "text", required: true, maxlength: "120" });
   const text = h("textarea", { rows: "10", placeholder: t("new.text_hint") });
+  const submit = h("button", { type: "submit", class: "btn primary" }, t("new.create"));
   const form = h("form", {
     onsubmit: async (event) => {
       event.preventDefault();
-      if (await act("/api/lane/new", { project: project.value, title: title.value, text: text.value })) {
-        dialog.close();
+      submit.disabled = true;
+      try {
+        const res = await api("/api/lane/new", {
+          project: project.value, title: title.value, text: text.value, mode: mode.value,
+        });
         refresh();
+        if (res.worktree) {
+          showCreatedDialog(dialog, res);
+        } else {
+          toast(res.message || t("done"));
+          dialog.close();
+        }
+      } catch (err) {
+        toast(err.message, true);
+        submit.disabled = false;
       }
     },
   },
     h("h2", {}, t("new.title")),
     h("label", {}, t("new.project"), project),
+    h("label", {}, t("new.mode"), mode),
     h("label", {}, t("new.name"), title),
     h("label", {}, t("new.text"), text),
     h("div", { class: "row end" },
       h("button", { type: "button", class: "btn", onclick: () => dialog.close() }, t("cancel")),
-      h("button", { type: "submit", class: "btn primary" }, t("new.create"))));
+      submit));
   dialog.append(form);
   dialog.addEventListener("close", () => dialog.remove());
   document.body.append(dialog);
@@ -124,8 +169,10 @@ export async function renderBoard(root, isCurrent) {
     if (!isCurrent()) return;
     put(root, 
       h("div", { class: "page-head" },
-        h("h1", {}, t("nav.board")),
-        h("button", {
+        h("h1", {}, t("nav.board"),
+          data.profile ? " " : null, data.profile ? h("span", { class: "tag" }, data.profile) : null,
+          data.readonly ? " " : null, data.readonly ? h("span", { class: "tag" }, t("mode.readonly")) : null),
+        data.readonly ? null : h("button", {
           class: "btn primary",
           disabled: !data.projects.length,
           title: data.projects.length ? null : t("new.no_project"),

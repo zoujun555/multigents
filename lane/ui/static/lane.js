@@ -20,6 +20,7 @@ function timeline(data) {
 }
 
 function actions(data, refresh) {
+  if (data.readonly) return h("p", { class: "muted" }, t("lane.readonly_hint"));
   if (data.archived) return h("p", { class: "muted" }, t("lane.archived"));
   const id = data.id;
   const items = [];
@@ -69,8 +70,8 @@ function actions(data, refresh) {
 function files(data, reload) {
   const view = h("div", { class: "file-view" }, h("p", { class: "muted" }, t("lane.pick_file")));
   const tabs = h("div", { class: "tabs" });
-  // 等待批准规格时，规格可以直接改；其他时候文件只读
-  const specEditable = data.status === "waiting" && data.stage === "spec_gate" && !data.archived;
+  // 等待批准规格时，规格可以直接改；其他时候或只读监控模式文件只读
+  const specEditable = !data.readonly && data.status === "waiting" && data.stage === "spec_gate" && !data.archived;
   const edit = (text) => {
     const box = h("textarea", { class: "editor spec-editor", spellcheck: "false" });
     box.value = text;

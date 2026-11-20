@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
-from . import jenny, ops
+from . import driver, jenny, ops
 from .core import AUTO_STAGES, STAGE_LABEL, Config, all_lanes, load_lane
 from .runner import scheduler
 
@@ -65,7 +66,37 @@ def cmd_clean(cfg: Config, args) -> None:
 
 def cmd_ui(cfg: Config, args) -> None:
     from .ui.server import serve
-    serve(cfg, open_browser=not args.no_browser)
+    serve(cfg, open_browser=not args.no_browser, readonly=True if args.readonly else None)
+
+
+def cmd_driver(cfg: Config, args) -> None:
+    act = args.driver_cmd
+    if act == "init":
+        text = Path(args.file).read_text(encoding="utf-8") if args.file else (args.message or args.title)
+        print(json.dumps(driver.init_lane(cfg, args.project, args.title, text, args.tier), ensure_ascii=False, indent=2))
+    elif act == "stage":
+        print(json.dumps(driver.set_stage(cfg, args.id, args.stage, args.status, args.note or "", args.commit, args.result),
+                         ensure_ascii=False, indent=2))
+    elif act == "preflight":
+        rc, res = driver.run_preflight_cmd(cfg, args.id, skip_verify=args.skip_verify)
+        print(json.dumps(res, ensure_ascii=False, indent=2))
+        sys.exit(rc)
+    elif act == "review":
+        rc, res = driver.run_review(cfg, args.id, kind=args.kind, agent=args.agent, model=args.model, effort=args.effort)
+        print(json.dumps(res, ensure_ascii=False, indent=2))
+        sys.exit(rc)
+    elif act == "approve":
+        print(ops.approve(cfg, args.id, args.message or ""))
+    elif act == "finish":
+        print(driver.finish_lane(cfg, args.id, clean=args.clean))
+    elif act == "lock":
+        print(json.dumps(driver.acquire_lock(cfg, args.resource, args.id), ensure_ascii=False))
+    elif act == "unlock":
+        print(driver.release_lock(cfg, args.resource, args.id, force=args.force))
+
+
+def cmd_profile(cfg: Config, args) -> None:
+    print(driver.switch_profile(cfg, args.name) if args.name else driver.format_profile_table(cfg))
 
 
 def cmd_rules(cfg: Config, args) -> None:
@@ -178,7 +209,51 @@ def main(argv: list[str] | None = None) -> None:
 
     s = sub.add_parser("ui", help="启动网页界面（看板、统计、操作、配置）")
     s.add_argument("--no-browser", action="store_true", help="不自动打开浏览器")
+    s.add_argument("--readonly", action="store_true", help="以只读监控模式启动（隐藏操作按钮并禁止写接口）")
     s.set_defaults(fn=cmd_ui)
+
+    d = sub.add_parser("driver", help="AGY 入口（multiagents-lane）使用的确定性原子命令")
+    ds = d.add_subparsers(dest="driver_cmd", required=True)
+    p1 = ds.add_parser("init", help="创建独立 worktree 并登记为 AGY 驱动需求")
+    p1.add_argument("project")
+    p1.add_argument("title")
+    p1.add_argument("-m", "--message", help="需求描述")
+    p1.add_argument("-f", "--file", help="从文件读需求描述")
+    p1.add_argument("--tier", choices=("standard", "light"), default="standard")
+    p2 = ds.add_parser("stage", help="更新阶段、状态和心跳")
+    p2.add_argument("id")
+    p2.add_argument("stage")
+    p2.add_argument("status")
+    p2.add_argument("--note", default="")
+    p2.add_argument("--commit", action="store_true")
+    p2.add_argument("--result", default="ok")
+    p3 = ds.add_parser("preflight", help="执行 0-Token 预检门禁并生成评审包")
+    p3.add_argument("id")
+    p3.add_argument("--skip-verify", action="store_true")
+    p4 = ds.add_parser("review", help="受控调用评审 Agent 执行规划或代码评审（支持临时覆写工具/模型/推理深度）")
+    p4.add_argument("id")
+    p4.add_argument("--kind", choices=("plan", "code"), default="code")
+    p4.add_argument("--agent", help="临时覆盖该阶段使用的工具（如 claude / agy）")
+    p4.add_argument("--model", help="临时覆盖该阶段使用的模型 ID")
+    p4.add_argument("--effort", help="临时覆盖推理深度（如 low / medium / high）")
+    p5 = ds.add_parser("approve", help="通过人工闸门")
+    p5.add_argument("id")
+    p5.add_argument("-m", "--message", help="批准规格时附带的意见")
+    p6 = ds.add_parser("finish", help="确认完成（可选清理 worktree 并归档）")
+    p6.add_argument("id")
+    p6.add_argument("--clean", action="store_true")
+    p7 = ds.add_parser("lock", help="获取共享资源锁（如 itest）")
+    p7.add_argument("resource")
+    p7.add_argument("id")
+    p8 = ds.add_parser("unlock", help="释放共享资源锁")
+    p8.add_argument("resource")
+    p8.add_argument("id")
+    p8.add_argument("--force", action="store_true")
+    d.set_defaults(fn=cmd_driver)
+
+    sp = sub.add_parser("profile", help="查看当前各阶段生效的模型配置，或切换方案（如 claudeplus / agy-only）")
+    sp.add_argument("name", nargs="?", help="要切换到的方案名；留空仅查看")
+    sp.set_defaults(fn=cmd_profile)
 
     sub.add_parser("doctor", help="检查工具、提示词和项目配置").set_defaults(fn=cmd_doctor)
 

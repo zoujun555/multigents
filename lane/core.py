@@ -18,7 +18,7 @@ HOME = Path(os.environ.get("LANE_HOME") or Path(__file__).resolve().parent.paren
 AUTO_STAGES = ("plan", "code", "review", "fix", "test", "itest", "report")
 GATES = ("spec_gate", "merge_gate")
 STAGE_LABEL = {
-    "plan": "规划", "spec_gate": "等待批准规格", "code": "编码", "review": "评审",
+    "plan": "规划", "plan_review": "规划评审", "spec_gate": "等待批准规格", "code": "编码", "review": "评审",
     "fix": "修复", "test": "测试设计", "itest": "集成测试", "report": "汇总", "merge_gate": "等待确认合并", "done": "完成",
 }
 STATUS_LABEL = {"queued": "排队", "running": "运行中", "waiting": "等你", "blocked": "卡住", "done": "完成"}
@@ -48,10 +48,19 @@ class Config:
     def __init__(self, home: Path = HOME):
         self.home = home
         path = Path(os.environ.get("LANE_CONFIG") or home / "config" / "lane.toml")
-        self.data = tomllib.loads(path.read_text(encoding="utf-8"))
-        local = home / "config" / "local.toml"   # 本机专用（项目登记、本机路径），不提交到 Git
-        if local.exists():
-            self.data = merge(self.data, tomllib.loads(local.read_text(encoding="utf-8")))
+        base_data = tomllib.loads(path.read_text(encoding="utf-8"))
+        local = home / "config" / "local.toml"   # 本机专用（项目登记、本机路径、方案与阶段覆盖），不提交到 Git
+        local_data = tomllib.loads(local.read_text(encoding="utf-8")) if local.exists() else {}
+        self.data = merge(base_data, local_data)
+        profile_name = str(self.get("workbench", "profile", "") or "").strip()
+        if profile_name:
+            profiles = self.data.get("profiles", {})
+            if profile_name not in profiles:
+                raise SystemExit(f"配置里没有方案 '{profile_name}'。可选：{', '.join(sorted(profiles)) or '（无）'}")
+            prof_stages = profiles[profile_name].get("stages", {})
+            if prof_stages:
+                # 优先级：lane.toml 默认 -> profile 方案 -> local.toml 显式阶段覆盖
+                self.data["stages"] = merge(merge(base_data.get("stages", {}), prof_stages), local_data.get("stages", {}))
         self.state_dir = home / "state"
         self.lanes_dir = self.state_dir / "lanes"
         self.logs_dir = self.state_dir / "logs"

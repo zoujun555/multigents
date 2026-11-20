@@ -22,6 +22,7 @@ OPEN_PATHS = {"/api/login", "/api/session"}   # 不需要先登录的接口
 class Handler(BaseHTTPRequestHandler):
     home: Path
     sessions: Sessions
+    readonly: bool = False
     server_version = "lane-ui"
 
     def log_message(self, fmt, *args):   # 不把每个请求都打到控制台
@@ -100,6 +101,9 @@ class Handler(BaseHTTPRequestHandler):
         if path not in OPEN_PATHS and not self.sessions.valid(self.token()):
             self.send_json(401, {"error": "需要登录"})
             return
+        if self.readonly and method == "POST" and path not in ("/api/login", "/api/logout"):
+            self.send_json(403, {"error": "当前为只读监控模式，禁止修改操作"})
+            return
         handler = ROUTES.get((method, path))
         if not handler:
             self.send_json(404, {"error": "没有这个接口"})
@@ -146,15 +150,16 @@ ROUTES = {
     ("POST", "/api/login"): Handler.login,
     ("POST", "/api/logout"): Handler.logout,
     ("GET", "/api/session"): lambda h, a: {"logged_in": h.sessions.valid(h.token())},
-    ("GET", "/api/board"): lambda h, a: api.board(h.cfg()),
+    ("GET", "/api/board"): lambda h, a: api.board(h.cfg(), readonly=h.readonly),
     ("GET", "/api/alerts"): lambda h, a: {"alerts": jenny.alert_history(h.cfg(), a.get("project", ""), 200)},
-    ("GET", "/api/lane"):lambda h, a: api.lane_detail(h.cfg(), a.get("id", "")),
+    ("GET", "/api/lane"): lambda h, a: api.lane_detail(h.cfg(), a.get("id", ""), readonly=h.readonly),
     ("GET", "/api/file"): lambda h, a: {"text": api.lane_file(h.cfg(), a.get("id", ""), a.get("name", ""))},
     ("GET", "/api/stats"): lambda h, a: stats.compute(h.cfg(), a.get("project", ""), a.get("from", ""), a.get("to", "")),
-    ("GET", "/api/config"): lambda h, a: {"files": api.config_files(h.home)},
+    ("GET", "/api/config"): lambda h, a: {"files": api.config_files(h.home), "readonly": h.readonly},
     ("GET", "/api/config/file"): lambda h, a: {"text": api.config_read(h.home, a.get("key", ""))},
     ("POST", "/api/config/file"): lambda h, a: message(api.config_save(h.home, a.get("key", ""), str(a.get("text", "")))),
-    ("POST", "/api/lane/new"): lambda h, a: message(ops.new(h.cfg(), str(a.get("project", "")), str(a.get("title", "")), str(a.get("text", "")))),
+    ("POST", "/api/lane/new"): lambda h, a: api.create_lane(
+        h.cfg(), str(a.get("project", "")), str(a.get("title", "")), str(a.get("text", "")), str(a.get("mode", ""))),
     ("POST", "/api/lane/approve"): lambda h, a: message(ops.approve(h.cfg(), str(a.get("id", "")), str(a.get("notes", "")))),
     ("POST", "/api/lane/spec"): lambda h, a: message(ops.edit_spec(h.cfg(), str(a.get("id", "")), str(a.get("text", "")))),
     ("POST", "/api/lane/reject"): lambda h, a: message(ops.reject(h.cfg(), str(a.get("id", "")), str(a.get("message", "")))),
@@ -165,17 +170,18 @@ ROUTES = {
 }
 
 
-def serve(cfg: Config, open_browser: bool = True) -> None:
+def serve(cfg: Config, open_browser: bool = True, readonly: bool | None = None) -> None:
     path, created = ensure_server_config(cfg.home)
     if created:
         print(f"已创建 {path}（用户名 admin，密码为空）。")
     settings = read_server_config(cfg.home)   # 密码为空时在这里退出，并说明怎么办
     host = settings.get("server", {}).get("host", "0.0.0.0")
     port = int(settings.get("server", {}).get("port", 8770))
-    Handler.home, Handler.sessions = cfg.home, Sessions(cfg.home)
+    is_readonly = bool(settings.get("server", {}).get("readonly", False)) if readonly is None else bool(readonly)
+    Handler.home, Handler.sessions, Handler.readonly = cfg.home, Sessions(cfg.home), is_readonly
     httpd = ThreadingHTTPServer((host, port), Handler)
     local = f"http://127.0.0.1:{port}/"
-    print(f"网页界面已启动：{local}")
+    print(f"网页界面已启动：{local}" + ("（只读监控模式）" if is_readonly else ""))
     if host not in ("127.0.0.1", "localhost"):
         print(f"其他机器访问：http://<这台机器的名称或 IP>:{port}/  （连不上时检查 Windows 防火墙是否放行 {port} 端口）")
         print("注意：这是明文 HTTP。要经过公网访问，请放在 HTTPS 反向代理后面。")

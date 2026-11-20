@@ -1,5 +1,24 @@
 # 变更记录
 
+## 2026-11-20 B+ 核心闭环：AGY 入口、0-Token 预检门禁、Claude 轻评审与 Web 只读监控
+
+改动：
+
+- **Token 精确记账（`lane/tokens.py`）**：解析 Claude 与 `agy` 的 JSON 日志（`input_tokens`、`cache_creation_tokens`、`cache_read_tokens`、`output_tokens`、`thinking_tokens`、`cost_usd`），追加写入 `state/tokens.json`，并在网页统计页（`lane/ui/stats.py` + `pages.js`）展示聚合明细；原有 `state/usage.json` 保持向后兼容。
+- **0-Token 确定性预检与评审打包（`lane/preflight.py`）**：在调用 Claude 评审之前，由工作台实跑项目 `build_cmd` / `unit_cmd`、按需执行配置化增量 Lint 插槽（`verify.lint_cmds`，支持 `{changed_files}`、`{base}`、`{worktree}`）、检查新增非测试文件行数上限、受保护文件（默认 `AGENTS.md`）、可选单 UTF-8 BOM（`require_utf8_bom`）以及注释大面积净删除预警；同时生成 `.lane/review-pack.md`（第 1 轮全量，第 2 轮起基于 `last_review_sha` 生成增量 diff 包）。
+- **AGY 主控原子命令与零路径引导器（`lane/driver.py`、`lane/cli.py`）**：新增 `lane driver <init|stage|preflight|review|approve|finish|lock|unlock>`（已统一为通用 `review` 并移除 `claude-review`），默认创建独立 `worktree`，并在 `.lane/`（已加入 `.git/info/exclude`，不进 Git）自动生成 `context.json`、`lane.cmd` 与 `lane.sh` 引导器，使 worktree 内无需配置系统 `PATH` 或写死 `multigents` 绝对路径即可调用并同步状态；支持 `standard` / `light` 两档与单次 `--agent/--model/--effort` 覆写，提供跨会话共享资源锁（如 `itest`）；原有 `lane run` 无头调度器完整保留。
+- **按阶段自定义模型与方案预设（`lane/core.py`、`config/lane.toml`、`lane profile`）**：将 `default_mode` 下沉至 `[agents.claude]` / `[agents.agy]` 以消除跨工具切换时的模式不匹配；新增 `claudeplus`（`plan_review`=Opus `high`、`review`=Sonnet `high`）与 `agy-only`（`plan_review`=`gemini-4-argon-high`、`review`=`gemini-4-neon-high`）两套方案预设，合并优先级为 `lane.toml` → `profile` → `local.toml [stages.*]` → CLI 参数；新增 `lane profile [name]` 查看生效配置与手动切换，并在 Web 看板头部展示当前激活方案。
+- **Claude 轻评审与配置瘦身（`config/lane.toml`、`lane/agents.py`、`prompts/plan_review.md`、`prompts/review.md`）**：Claude 切换 `--output-format json`，支持阶段级 `effort` 与 `--max-turns` 覆盖；新增 `[stages.plan_review]`（轻审规划，只提问题与改造方向）；`review` 去掉无头不可执行的构建命令段、优先读取预打包上下文与增量 diff；`report` 与默认 `diagnose` 迁给 `agy`；无头规则禁止写完结果文件后在 stdout 重复输出双语长摘要。
+- **AGY 入口 Skill 模板（`templates/skills/multiagents-lane/SKILL.md`）**：给出在 Antigravity 会话内驱动 B+ 流水线、对话内完成 `spec_gate` / `merge_gate` 确认、并用原生 subagent 隔离 `test` 阶段的标准流程。
+- **Web 只读监控模式与新建 AGY 需求（`lane/ui/server.py`、`api.py`、`auth.py`、前端与多语言）**：新增 `lane ui --readonly` 与 `config/server.toml` 的 `readonly = true` 配置（只读模式下后端对除登录/登出外的 `POST` 写接口返回 HTTP `403`，前端隐藏写控件并显示多语言监控标识）；非只读模式下，网页「新建需求」弹窗新增「执行方式」选项（`AGY 驱动 standard` / `AGY 驱动 light` / `旧调度器队列`，API 缺省保持旧队列兼容），选 AGY 驱动时调用 `driver.init_lane()` 生成 `.lane/context.json` 与 `.lane/lane.cmd`，并在弹窗内展示可一键复制的 `worktree` 路径。
+- **自检与 CI（`tests/test_bplus_driver.py` 等）**：新增 B+ 核心闭环测试（Token 解析、预检门禁 + `lint_cmds`、两档轻评审与增量二轮复审、资源锁、Web 只读 403），同步更新 `check_agent_commands.py`、`run_demo.py`、`run_ui_check.py` 与 `.github/workflows/tests.yml`。
+
+经验：
+
+- Windows 用户名或路径里带括号（如 `Users\Name(Tag)`）时，传给 PowerShell 的路径必须加引号（并用 `& "..."` 调用可执行文件），否则 PowerShell 会把括号当子表达式解析报错；`_format_paths` 因此同时对空格和括号加引号。
+- 把 `readonly` 放在 `/api/board`、`/api/lane`、`/api/config` 而非 `/api/session`，既满足前端判断，又保持已有 `/api/session` 契约完全兼容。
+
+
 ## 2026-11-17 支持在 Linux / macOS 上运行
 
 改动：

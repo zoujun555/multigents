@@ -5,6 +5,7 @@ import json
 from collections import Counter, defaultdict
 from datetime import datetime
 
+from .. import tokens
 from ..core import AUTO_STAGES, Config
 
 
@@ -74,6 +75,7 @@ def compute(cfg: Config, project: str = "", date_from: str = "", date_to: str = 
         "stages": stages,
         "blocked_notes": [{"note": n, "count": c} for n, c in blocked_notes.most_common(8)],
         "usage_days": days,
+        "tokens": tokens.summarize(cfg, project, date_from, date_to),
         "agents": sorted(cfg.data.get("agents", {})),
         "budget": cfg.data.get("budget", {}),
         "projects": sorted(cfg.projects),

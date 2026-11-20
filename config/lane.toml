@@ -4,6 +4,7 @@
 max_parallel = 2          # 同时运行的阶段总数（跨所有需求）
 poll_seconds = 15         # 调度器轮询间隔
 limit_pause_minutes = 30  # 工具报告用量额度用完时，暂停它多久再重试（需求留在原阶段排队，不算卡住）
+profile = "claudeplus"    # 激活的模型方案（可选：claudeplus | agy-only；在 local.toml 或用 lane profile 切换）
 # 工作空间：所有需求的工作树放在这里（<工作空间>/<项目>/REQ-xxx）。默认在工作台文件夹下的 worktrees/。
 # 想放到别处（比如另一个盘、一个短路径），在 config/local.toml 里写 [workbench] worktree_root = "D:/lane-ws"，
 # 不要改这里：绝对路径是本机的，不应提交。支持 ~ 和环境变量（%USERPROFILE%）。路径越短越好，
@@ -24,8 +25,9 @@ max_rounds = 2            # 评审不通过后最多修复几轮，超过就停�
 stale_minutes = 10        # 运行中的阶段多久没有心跳算卡死
 gate_reminder_hours = 4   # 等人确认超过多久提醒一次
 budget_warn_ratio = 0.8
-diagnose = true           # 需求卡住时是否让 Claude 读日志写一份 diagnosis.md
-diagnose_model = "haiku"
+diagnose = true           # 需求卡住时是否写一份 diagnosis.md
+diagnose_agent = "agy"    # 默认用 agy 诊断（0 Claude Token）；也可改回 "claude"
+diagnose_model = "gemini-3.8-flash-high"
 # 需要你注意时执行的命令（可选；不设就不通知）。消息放在环境变量 LANE_MESSAGE 里，
 # 在 PowerShell 里用 $env:LANE_MESSAGE。不要把 {message} 写进 shell 字符串：它不会被转义。
 # 通知的情况：有新告警（卡住、没有心跳、额度用完……）；需求到了闸门等你批准（notify_gates）；
@@ -36,17 +38,19 @@ notify_gates = true        # 需求到了"等待批准规格"或"等待确认合
 notify_stage_done = false  # 每个阶段完成都通知（比较吵）
 
 # ---- 工具适配器 --------------------------------------------------------
-# command 里的占位符：{prompt} {model} {mode} {effort}（取自 [agents.xxx] 的 effort）{timeout}（秒）{worktree}
+# command 里的占位符：{prompt} {model} {mode} {effort}（阶段可覆盖 [agents.xxx] 的 effort）{max_turns} {timeout}（秒）{worktree}
 # 某个占位符的值为空时，该参数连同它前面的 --flag 一起省略。
 # {prompt} 是一句很短的话，指向工作树里的 .lane/prompt-<阶段>.md。
 
 [agents.claude]
-command = ["claude", "-p", "{prompt}", "--model", "{model}", "--permission-mode", "{mode}", "--effort", "{effort}", "--output-format", "text"]
+command = ["claude", "-p", "{prompt}", "--model", "{model}", "--permission-mode", "{mode}", "--effort", "{effort}", "--max-turns", "{max_turns}", "--output-format", "json"]
+default_mode = "acceptEdits"
 max_parallel = 2
-effort = "high"           # 所有 Claude 阶段（含诊断）共用：low | medium | high | xhigh | max；留空 = 不传 --effort
+effort = "high"           # 默认 effort（各阶段可单独覆盖）：low | medium | high | xhigh | max；留空 = 不传 --effort
 
 [agents.agy]
 command = ["agy", "-p", "{prompt}", "--model", "{model}", "--mode", "{mode}", "--print-timeout", "{timeout}s", "--output-format", "json", "--settings", "{settings}"]
+default_mode = "accept-edits"
 max_parallel = 2
 # 无头模式下 agy 不能询问权限：不在允许列表里的命令会被拒绝，并且整个会话立刻结束。
 # 这里和各项目的 allow_commands 列出可以执行的命令（正则，从命令开头匹配），只对本次会话生效，
@@ -61,37 +65,45 @@ allow_commands = []
 [stages.plan]
 agent = "claude"
 model = "opus"
-mode = "acceptEdits"
+effort = "high"
+max_turns = 25
 timeout_min = 30
+writes = ["{req_dir}"]
+on_violation = "revert"
+
+[stages.plan_review]      # AGY 起草 spec.md 后的规划轻评审（只提问题与改造思路）
+agent = "claude"
+model = "opus"
+effort = "high"
+max_turns = 12
+timeout_min = 15
 writes = ["{req_dir}"]
 on_violation = "revert"
 
 [stages.code]
 agent = "agy"
-model = "gemini-3.8-flash-high"   # 可填 `agy models` 列出的 ID；留空 = 用 agy 的默认模型
-mode = "accept-edits"
+model = "gemini-3.8-flash-high"   # 可填 `agy models` 列出的完整 ID；留空 = 用 agy 默认模型
 timeout_min = 90
 writes = ["*"]
 
 [stages.fix]
 agent = "agy"
 model = "gemini-3.8-flash-high"
-mode = "accept-edits"
 timeout_min = 60
 writes = ["*"]
 
 [stages.review]
 agent = "claude"
 model = "sonnet"
-mode = "acceptEdits"
-timeout_min = 30
+effort = "high"
+max_turns = 15
+timeout_min = 20
 writes = ["{req_dir}"]
 on_violation = "revert"
 
 [stages.test]             # 测试设计：只写测试并编译，不占共享资源，可以并行
 agent = "agy"
 model = "gemini-3.8-flash-high"
-mode = "accept-edits"
 timeout_min = 90
 writes = ["{req_dir}", "{test_paths}"]
 on_violation = "block"
@@ -100,18 +112,50 @@ on_violation = "block"
 agent = "agy"
 max_parallel = 1          # 集成测试排队：同一时间只跑一个（共享测试数据库和 CoverageHub）
 model = "gemini-3.8-flash-high"
-mode = "accept-edits"
 timeout_min = 60
 writes = ["{req_dir}", "{test_paths}"]
 on_violation = "block"
 
 [stages.report]
-agent = "claude"
-model = "sonnet"
-mode = "acceptEdits"
+agent = "agy"
+model = "gemini-3.8-flash-high"
 timeout_min = 20
 writes = ["{req_dir}"]
 on_violation = "revert"
+
+# ---- 方案预设（Profiles）------------------------------------------------
+# 合并优先级：lane.toml [stages.*] -> 当前 profile 的 stages -> local.toml [stages.*] -> CLI 参数。
+# 用 `lane profile` 查看生效配置，用 `lane profile agy-only` / `lane profile claudeplus` 手动切换。
+
+[profiles.claudeplus.stages.plan]
+agent = "claude"
+model = "opus"
+effort = "high"
+
+[profiles.claudeplus.stages.plan_review]
+agent = "claude"
+model = "opus"
+effort = "high"
+
+[profiles.claudeplus.stages.review]
+agent = "claude"
+model = "sonnet"
+effort = "high"
+
+[profiles.agy-only.stages.plan]
+agent = "agy"
+model = "gemini-4-argon-high"
+effort = ""
+
+[profiles.agy-only.stages.plan_review]
+agent = "agy"
+model = "gemini-4-argon-high"
+effort = ""
+
+[profiles.agy-only.stages.review]
+agent = "agy"
+model = "gemini-4-neon-high"
+effort = ""
 
 # ---- 项目 --------------------------------------------------------------
 # 项目（仓库路径、构建和测试命令、允许 agy 执行的命令）带有本机路径，不放在这个文件里：

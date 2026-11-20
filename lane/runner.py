@@ -198,8 +198,10 @@ def diagnose(cfg: Config, lane: Lane, stage: str, log_path: Path) -> None:
         tail = log_path.read_text(encoding="utf-8", errors="replace")[-6000:]
         (lane.worktree / ".lane" / "last-log.txt").write_text(tail, encoding="utf-8")
         prompt = render_prompt(cfg, lane, "diagnose").replace("{{stage}}", stage).replace("{{note}}", lane.data.get("note", ""))
-        stage_cfg = {"agent": "claude", "mode": "acceptEdits", "timeout_min": 5}
-        run_agent(cfg, lane, "diagnose", stage_cfg, prompt, model=cfg.get("jenny", "diagnose_model", "haiku"))
+        d_agent = cfg.get("jenny", "diagnose_agent", "agy")
+        d_mode = "accept-edits" if d_agent == "agy" else "acceptEdits"
+        stage_cfg = {"agent": d_agent, "mode": d_mode, "effort": "low", "timeout_min": 5}
+        run_agent(cfg, lane, "diagnose", stage_cfg, prompt, model=cfg.get("jenny", "diagnose_model", ""))
         enforce_scope_for_diagnose(lane)
         lane.save()
     except Exception as exc:

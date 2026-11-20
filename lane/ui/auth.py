@@ -16,6 +16,7 @@ TEMPLATE = '''# 网页界面（lane ui）的设置。改完立即生效；改了
 [server]
 host = "0.0.0.0"     # 0.0.0.0 = 允许其他机器访问；只限本机用 "127.0.0.1"
 port = 8770
+readonly = false     # true = 只读监控模式（隐藏操作按钮并禁止写接口，配合 AGY 入口使用）
 
 [login]
 username = "admin"
