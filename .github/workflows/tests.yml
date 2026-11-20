@@ -43,16 +43,16 @@ jobs:
           git config --global user.email ci@example.invalid
 
       - name: 单元测试
-        run: python tests/unit_tests.py
+        run: python tests/ci_run.py tests/unit_tests.py
 
       - name: 仓库检查（不该提交的文件、本机路径、模板）
-        run: python tests/check_repo_hygiene.py
+        run: python tests/ci_run.py tests/check_repo_hygiene.py
 
       - name: 命令行检查
-        run: python tests/check_agent_commands.py
+        run: python tests/ci_run.py tests/check_agent_commands.py
 
       - name: 网页和接口检查
-        run: python tests/run_ui_check.py
+        run: python tests/ci_run.py tests/run_ui_check.py
 
       - name: 完整流水线检查
-        run: python tests/run_demo.py
+        run: python tests/ci_run.py tests/run_demo.py

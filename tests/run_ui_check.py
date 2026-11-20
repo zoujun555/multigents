@@ -91,8 +91,11 @@ def call(path, body=None, headers=None, raw=False):
 def wait_for(check, what, seconds=60):
     end = time.time() + seconds
     while time.time() < end:
-        if check():
-            return
+        try:
+            if check():
+                return
+        except (urllib.error.URLError, ConnectionError):
+            pass   # 服务还没开始监听：Linux 上连接立刻被拒绝，Windows 上要等一两秒才失败，所以只有 Linux 会走到这里
         time.sleep(0.5)
     raise AssertionError(f"等待超时：{what}")
 
